@@ -1,0 +1,90 @@
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(CellChat)
+library(ComplexHeatmap)
+library(SpatialExperiment)
+library(nnSVG)
+```
+
+#data processing
+```{r}
+#the original paper is https://pmc.ncbi.nlm.nih.gov/articles/PMC10876948/#notes3
+#the seurat object was downloaded directly from the following link https://figshare.com/s/3ceec45e4a640a7bceb4
+#---
+merged_seurat_tissue_study1 <- readRDS("~/biopsy_RNA.rds")
+
+#---
+#add sample names
+merged_seurat_tissue_study1$scRNAseq_sample <- paste("scRNAseq",merged_seurat_tissue_study1$CoLabs_patient, sep = "_")
+
+#---
+#do sample split
+merged_seurat_tissue_study1[["RNA"]] <- split(merged_seurat_tissue_study1[["RNA"]], f = merged_seurat_tissue_study1$scRNAseq_sample)
+
+#---
+#run seurat workflow
+merged_seurat_tissue_study1 <- NormalizeData(merged_seurat_tissue_study1)
+merged_seurat_tissue_study1 <- FindVariableFeatures(merged_seurat_tissue_study1)
+merged_seurat_tissue_study1 <- ScaleData(merged_seurat_tissue_study1)
+merged_seurat_tissue_study1 <- RunPCA(merged_seurat_tissue_study1)
+
+merged_seurat_tissue_study1 <- IntegrateLayers(object = merged_seurat_tissue_study1, orig.reduction = "pca",method = HarmonyIntegration,
+  new.reduction = "harmony", verbose = TRUE)
+
+merged_seurat_tissue_study1 <- Seurat::RunUMAP(merged_seurat_tissue_study1, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+merged_seurat_tissue_study1 <- FindNeighbors(merged_seurat_tissue_study1, dims = 1:30, reduction = "harmony")
+merged_seurat_tissue_study1 <- FindClusters(merged_seurat_tissue_study1, resolution = c(0.1))
+
+#cell type annotation (cell types were decided by markers of each cluster using findallmarkers, not shown here)
+Idents(merged_seurat_tissue_study1) <- "RNA_snn_res.0.1"
+
+#obtain the top markers
+merged_seurat_tissue_study1 <- JoinLayers(merged_seurat_tissue_study1)
+a <- FindAllMarkers(merged_seurat_tissue_study1)
+write.csv(a, file = "~/git_share_paper1_scRNAseq_markers.csv")
+
+#celltypes based on the top markers
+merged_seurat_tissue_study1$cell_type_res01 <- case_when(merged_seurat_tissue_study1$RNA_snn_res.0.1 == 0 ~ "CD4 T",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 1 ~ "CD8 T",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 2 ~ "plasma",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 3 ~ "epithelial",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 4 ~ "fibroblast",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 5 ~ "B",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 6 ~ "myeloid",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 7 ~ "endothelial",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 8 ~ "proliferating",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 9 ~ "KRT high unknown",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 10 ~ "mast",
+                                           merged_seurat_tissue_study1$RNA_snn_res.0.1 == 11 ~ "Enteric glial cells")
+#---
+#add SPP1 expression status
+#merged_seurat_tissue_study1 <- JoinLayers(merged_seurat_tissue_study1)
+#Fetch SPP1 expression as a data frame
+df <- FetchData(merged_seurat_tissue_study1, vars = "SPP1")
+df$SPP1_status <- ifelse(df$SPP1 > 0, "SPP1+", "SPP1-")
+merged_seurat_tissue_study1$SPP1_status <- df$SPP1_status
+
+#---
+#add module scores
+ANGIOGENESIS_NR_up_EndoW14NR <- "STC1,SPP1,FGFR1,TIMP1,CXCL6,THBD,SERPINA5,PGLYRP1,PRG2,OLR1,MSX1"
+ANGIOGENESIS_NR_up_all <- "SPP1,STC1,TIMP1,CXCL6,OLR1,THBD,PGLYRP1,PRG2,FSTL1,KCNJ8,FGFR1,PF4,CCND2,MSX1"
+
+ANGIOGENESIS_NR_up_EndoW14NR <- unlist(strsplit(ANGIOGENESIS_NR_up_EndoW14NR, ","))
+ANGIOGENESIS_NR_up_all <- unlist(strsplit(ANGIOGENESIS_NR_up_all, ","))
+
+merged_seurat_tissue_study1 <- AddModuleScore(merged_seurat_tissue_study1, features = list(ANGIOGENESIS_NR_up_EndoW14NR,ANGIOGENESIS_NR_up_all),
+                                      name = c("ANGIOGENESIS_NR_up_EndoW14NR","ANGIOGENESIS_NR_up_all"))
+
+#---
+#subset to myeloids
+Idents(merged_seurat_tissue_study1) <- "cell_type_res01"
+merged_seurat_tissue_study1_myeloid <- subset(merged_seurat_tissue_study1, idents = "myeloid")
+
+#---
+#plotting for figure 2F tissue part
+DotPlot(merged_seurat_tissue_study1_myeloid, group.by = "SPP1_status", features = c("ANGIOGENESIS_NR_up_all2",ANGIOGENESIS_NR_up_all,"ITGA4","ITGB7", "MMP19", "CCL2"), cols = c("lightgrey","red"))+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
