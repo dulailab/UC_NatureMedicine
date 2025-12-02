@@ -14,19 +14,20 @@ library(AUCell)
 ```{r}
 #the aggregated, original count and coordinates matrix was downloaded from
 #https://figshare.com/s/da487c769a6040427695
+#processed merged Seurat object can be accessed through 10.6084/m9.figshare.30767693
 
 #A = Control (n=4), C = UC vedolizumab responders (n=3), D = UC vedolizumab non-responders (n=2)
 
 #all the samples were merged and harmony integrated
-list_10x_merge <- merge(DS405A1, y = c(DS405A2, DS405A3,DS405A4, DS405C1,DS405C2,DS405C3,DS405D1,DS405D2), add.cell.ids = c("DS405A1", "DS405A2", "DS405A3","DS405A4","DS405C1","DS405C2","DS405C3","DS405D1","DS405D2"), project = "spatial")
+#list_10x_merge <- merge(DS405A1, y = c(DS405A2, DS405A3,DS405A4, DS405C1,DS405C2,DS405C3,DS405D1,DS405D2), add.cell.ids = c("DS405A1", #"DS405A2", "DS405A3","DS405A4","DS405C1","DS405C2","DS405C3","DS405D1","DS405D2"), project = "spatial")
 
 #process the data using harmony
-list_10x_merge <- NormalizeData(list_10x_merge)
-list_10x_merge <- FindVariableFeatures(list_10x_merge)
-list_10x_merge <- ScaleData(list_10x_merge)
-list_10x_merge <- RunPCA(list_10x_merge)
-list_10x_merge <- IntegrateLayers(object = list_10x_merge, method = HarmonyIntegration, orig.reduction = "pca",
-  new.reduction = 'harmony')
+#list_10x_merge <- NormalizeData(list_10x_merge)
+#list_10x_merge <- FindVariableFeatures(list_10x_merge)
+#list_10x_merge <- ScaleData(list_10x_merge)
+#list_10x_merge <- RunPCA(list_10x_merge)
+#list_10x_merge <- IntegrateLayers(object = list_10x_merge, method = HarmonyIntegration, orig.reduction = "pca",
+#  new.reduction = 'harmony')
 ```
 
 #gene sets for AUCell annotation
