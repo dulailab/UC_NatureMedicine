@@ -1,0 +1,535 @@
+
+```{python Note this part is finished by Scanpy}
+import scanpy as sc
+import pandas as pd
+import numpy as np
+import squidpy as sq
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+import gc
+import anndata as ad
+from matplotlib.backends.backend_pdf import PdfPages
+
+#read in the longitude CosMx dataset that can be downloaded directly from the link: https://figshare.com/s/e8ad68ff0b4627351df0
+adata = sc.read_h5ad("~/23_8_6_CosMx_longitudinal.h5ad")
+
+#need to use AUCell to annotate the longitude CosMx dataset
+
+# Extract normalized counts (cells x genes)
+norm_matrix = adata.to_df(layer='log_normalized_counts')  # This gives a DataFrame with cell names as index
+# reset index to make cell IDs a column
+norm_matrix.index.name = "cell_id"
+norm_matrix.reset_index(inplace=True)
+# Save to CSV
+norm_matrix.to_csv("~/normalized_matrix_for_AUCell.csv", index=False)
+
+
+#also save the raw counts
+# Extract normalized counts (cells x genes)
+norm_matrix = adata.to_df(layer='raw_counts')  # This gives a DataFrame with cell names as index
+# reset index to make cell IDs a column
+norm_matrix.index.name = "cell_id"
+norm_matrix.reset_index(inplace=True)
+# Save to CSV
+norm_matrix.to_csv("~/raw_matrix_for_AUCell.csv", index=False)
+
+#also save the metadata for seurat object
+adata.obs.to_csv("~/metadata_for_seurat.csv")
+```
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(CellChat)
+library(AUCell)
+library(GSEABase)
+library(data.table)
+```
+
+```{r create seruat obj}
+# Read and preprocess data
+raw_1k <- fread("~/raw_matrix_for_AUCell.csv")
+raw_1k <- as.data.frame(raw_1k)
+rownames(raw_1k) <- raw_1k[[1]]  
+raw_1k <- raw_1k[, -1] 
+
+# Create Seurat object
+raw_1k_so <- CreateSeuratObject(counts = t(raw_1k))
+	
+#add metadata
+meta <- read.csv("~/metadata_for_seurat.csv", row.names = 1)
+
+# Ensure that rownames match Seurat cell names
+meta <- meta[Cells(raw_1k_so), , drop = FALSE]
+
+# Assign metadata
+raw_1k_so <- AddMetaData(raw_1k_so, metadata = meta)
+
+#no slide information, process the dataset
+raw_1k_so <- NormalizeData(raw_1k_so)
+raw_1k_so <- FindVariableFeatures(raw_1k_so)
+raw_1k_so <- ScaleData(raw_1k_so)
+raw_1k_so <- RunPCA(raw_1k_so)
+raw_1k_so <- RunUMAP(raw_1k_so, dims = 1:30)
+```
+
+#Gene markers set for each cell types
+```{r}
+
+#gene marker sets were obtained from reference datasets/papers mentioned in the paper
+
+scRNAseq_HC_markers_list <- list(
+
+  Myeloid = c(
+    "LYZ","TYROBP","FCER1G","HLA-DPB1","HLA-DRA","C1QA","HLA-DQA1","HLA-DRB5","HLA-DRB1",
+    "C1QC","C1QB","HLA-DPA1","HLA-DQB1","IL1B","GLUL","COTL1","SLC40A1","CLEC10A","ITGB2",
+    "LGALS1","CD14","PSAP","CCL3","HCK","TNFSF13B","CXCL16","MS4A4A","CLEC7A","CSF1R",
+    "GPNMB","CD36","CD74","RB1","SAT1","CD68","IGF1","PTGS2","IER3","CD86","CD209",
+    "CSF2RA","S100A9","LYN","CD81","CXCL2","CD300A","TIMP1","ICAM1","ENTPD1","BST2"
+  ),
+
+  Connective = c(
+    "IGFBP7","COL1A2","COL3A1","CXCL14","CALD1","IFITM3","COL6A2","RARRES2","DCN","GPX3",
+    "GSN","CFD","COL1A1","LUM","MMP2","COL6A1","TPM2","CXCL12","TM4SF1","BMP4","MYL9","CCL2",
+    "SPARCL1","TIMP1","LGALS1","IGFBP6","CCL8","SERPINH1","SNAI2","CCL13","MXRA8","FOXF1",
+    "PTGDS","CCL11","MEG3","IGFBP3","VCAN","ACTA2","C11orf96","COL5A1","CAV1","BMP5",
+    "COL4A2","PDGFRA","VCAM1","COL18A1","COL14A1","FN1","COL6A3","IL6ST"
+  ),
+
+  Granulocyte = c(
+    "TPSAB1","HPGDS","CPA3","FCER1G","CLU","GLUL","ANXA1","TYROBP","CTSG","KIT","TPSB2",
+    "CD9","KRT1","IL1RL1","STMN1","TSC22D1","DUSP6","TNFSF10","CSF1","BTK","S100A4","AREG",
+    "CD63","LMNA","SRGN","NFKBIA","VIM","RGS1","CD69","CD44","JUN","EMP3","TIMP1","DUSP1",
+    "RGS2","SAT1","DDIT3","HSP90AB1","FOS","CD37","HSPA1B","HSPA1A","JUNB","CALM2","IGKC",
+    "SQSTM1","HSP90B1","XBP1","CD59","RPL22"
+  ),
+
+  Neuron = c(
+    "CRYAB","CLU","IGFBP7","S100B","SPP1","IFITM3","CD9","CCL2","COL1A2","SPARCL1","GPX3",
+    "NRXN1","MYL9","COL18A1","MXRA8","IL11RA","COL1A1","RARRES2","COL9A3","CD59","LGALS1",
+    "ANXA2","IFI27","ERBB3","S100A4","S100A10","HLA-DRB1","STMN1","APP","VIM","PSAP","CALM2",
+    "HSPA1A","CD63","ATF3","HLA-DPA1","HSP90B1","JUNB","HSPB1","CALM1","LMNA","SOD1","CD47",
+    "ZFP36","PTGES3","NOSIP","GSTP1","BST2","MAP1LC3B","TUBB4B"
+  ),
+
+  T = c(
+    "CD3E","CD3D","CD2","IL32","IL7R","CD52","HCST","PTPRC","ANXA1","CD3G","CCL5","IFITM1",
+    "KLRB1","ARHGDIB","S100A4","SPOCK2","CD69","FYN","LTB","CST7","CLEC2D","RORA","GPR183",
+    "RAC2","ETS1","SRGN","NKG7","ADGRE5","ITM2A","STAT4","GZMA","CD48","CD8A","RUNX3","ICOS",
+    "GATA3","DUSP2","CRIP1","IL2RG","NR3C1","JAK1","STAT3","CTSW","RGCC","PTPRCAP","ITGB2",
+    "RGS1","ZFP36","CCL4","KLF2"
+  ),
+
+  NK = c(
+    "IL32","CD2","CCL5","ANXA1","IL7R","CXCR4","CD52","KLRB1","LTB","HCST","S100A4","CD69",
+    "ARHGDIB","PTPRC","CST7","KRT10","SRGN","FYN","CD3G","CD3D","NKG7","SPOCK2","RGCC","GPR183",
+    "DUSP2","DUSP5","RORA","BTG1","JUNB","B2M","CLEC2D","IFITM1","PTPRCAP","RPL37","ITM2A",
+    "ICAM3","CALM1","DUSP1","CD48","CLEC2B","RGS1","HLA-E","BAX","RPS4Y1","FOS","CALM3","CD53",
+    "IL2RG","STAT3","CD44"
+  ),
+
+  B = c(
+    "MS4A1","HLA-DRA","HLA-DPB1","HLA-DRB1","VPREB3","HLA-DPA1","HLA-DQA1","HLA-DQB1","CD79A",
+    "CD83","HLA-DRB5","LTB","CD37","CXCR4","CD52","IGHM","CD74","CD19","SELL","FCRLA","IGHD",
+    "CD53","TCL1A","LYN","GPR183","CXCR5","CD24","P2RX5","KLF2","CCR7","CD40","RAC2","CD55",
+    "CD48","IL16","SMARCB1","TNFRSF13B","ATM","BTG1","CSK","PARP1","RPL22","RPL37","RPL21",
+    "RPL34","RPL32","MALAT1","JAK1","RGS2","CD47"
+  ),
+
+  Plasma = c(
+    "MZB1","TNFRSF17","CD79A","FKBP11","XBP1","CD27","IGKC","HSP90B1","CCR10","DUSP5","IGHA1",
+    "TNFRSF18","IGHM","TNFRSF13B","CD38","JCHAIN","PNOC"
+  ),
+
+  Epithelial = c(
+    "KRT8","EPCAM","KRT18","PIGR","KRT19","IFI27","CLDN4","AGR2","CD9","CYSTM1","LGALS3",
+    "LGALS3BP","TPM1","FCGBP","KRT20","ADIRF","SFN","ANXA2","S100A10","SPINK1","CCL15","MT2A",
+    "RAC1","FABP5","LGALS9","ANXA4","TUBB4B","TSC22D1","APP","IER3","PLAC8","S100A6","CD63",
+    "HSD17B2","NDRG1","MT1X","PPARG","ERBB3","CDH1","CEACAM1","PHLDA2","EFNA1","LEFTY1",
+    "ERBB2","MAPK13","GSTP1","PTGES2","OAS1","GAS6","IFNGR2"
+  ),
+
+  Endothelial = c(
+    "SPARCL1","RAMP2","CAV1","IGFBP7","TM4SF1","RAMP3","IFITM3","CLEC14A","IFI27","ENG","VWF",
+    "ESAM","FABP5","GSN","MGP","TNFSF10","CD59","TGFBR2","APP","TSC22D1","CD36","CD34","ACVRL1",
+    "GAS6","FLT1","CDH5","IL3RA","COL4A1","COL15A1","COL4A2","KDR","ICAM1","DUSP6","LIFR","TIE1",
+    "IGFBP3","ACE","IFIT1","ITGA5","CLU","CCND1","TEK","ITGA6","COL18A1","ITGA1","BST2",
+    "ENTPD1","RGCC","STMN1","NR1H2"
+  )
+)
+
+scRNAseq_inflamed_markers_list <- list(
+
+  Myeloid = c(
+    "TYROBP","S100A9","FCER1G","IL1B","LYZ","SOD2","S100A8","GLUL","CXCL8","CD14","FPR1","IL1RN",
+    "LYN","SERPINA1","PTGS2","CLEC7A","HCK","CSF3R","ICAM1","TNFSF13B","HLA-DRA","C1QA","CCL3",
+    "C1QB","SAT1","CXCL16","HLA-DPB1","C1QC","CSF2RB","HLA-DRB1","CD68","CLEC4A","ITGAX","HCAR3",
+    "TLR4","BID","HLA-DPA1","OSM","FCGR3A","PSAP","CCR1","ADGRE2","TNFAIP6","CD55","DUSP6",
+    "HLA-DRB5","LGALS9","SYK","CYSTM1","NEAT1"
+  ),
+
+  Connective = c(
+    "COL3A1","CALD1","COL1A2","COL6A2","COL1A1","TPM2","DCN","COL6A1","RARRES2","LUM","COL6A3",
+    "MMP2","MYL9","C11orf96","CXCL14","COL5A2","IGFBP5","CFD","COL5A1","PDGFRA","IGFBP6","MEG3",
+    "COL18A1","COL14A1","TAGLN","CDH11","CCL2","FN1","MXRA8","DDR2","BGN","COL12A1","FOXF1",
+    "FGF7","ACTA2","BMP4","PTGDS","CXCL12","SNAI2","MRC2","CCL11","WNT5A","CHI3L1","GPX3",
+    "OSMR","HGF","NRG1","WNT2B","HSD17B2","MMP1"
+  ),
+
+  Granulocyte = c(
+    "TPSAB1","CPA3","HPGDS","FCER1G","CLU","ANXA1","CTSG","TYROBP","CD9","KIT","GLUL","KRT1",
+    "IL1RL1","TPSB2","CD69","LMNA","S100A4","TNFSF10","CD63","SRGN","DUSP6","STMN1","TSC22D1",
+    "THBS1","NFKBIA","TIMP1","RGS1","VIM","AHR","RGCC","JUN","MALAT1","CD44","EMP3","HSPA1A",
+    "HSP90AA1","KRT10","CALM2","NEAT1","SAT1","CALM3","LGALS1","GADD45B","MT2A","SEC61G"
+  ),
+
+  Neuron = c(
+    "CRYAB","S100B","IGFBP7","CLU","NRXN1","SPARCL1","CD9","IFITM3","DST","CCL2","GSN","COL18A1",
+    "SPP1","PDGFA","ERBB3","COL8A1","COL9A3","MXRA8","ITGB8","ITGB4","PDGFB","NGFR","NRXN3",
+    "COL14A1","COL5A3","ALCAM","IL11RA","FGF2","SERPINA3","MYL9","TNFRSF12A","LGALS3BP","CD59",
+    "AHR","ANXA2","IFI27","COL5A1","PTK2","GPNMB","ADIRF","CCND1","IL6ST","TGFBR2","VIM",
+    "NDRG1","SERPINH1","S100A6","LAMP2","IGFBP6","YBX3"
+  ),
+
+  T = c(
+    "CD3E","CD3D","IL32","CD2","CD3G","PTPRC","HCST","SPOCK2","ARHGDIB","CST7","CCL5","KLRB1",
+    "FYN","IL7R","LTB","RAC2","S100A4","CD8A","NKG7","GZMA","IL2RG","IFITM1","SRGN","ITM2A",
+    "CLEC2D","RORA","COTL1","TIGIT","DUSP2","CD8B","ICOS","ETS1","IL2RB","RUNX3","CTSW",
+    "STAT4","DUSP4","FYB1","TNFRSF1B","ANXA1","CRIP1","CLEC2B","ADGRE5","EZR","NR3C1","CCL4",
+    "HLA-A","HMGB2","SIGIRR","MZT2A"
+  ),
+
+  NK = c(
+    "IL32","KLRB1","CD2","LTB","CD52","CD3D","CCL5","HCST","CXCR4","IL7R","CD69","PTPRC",
+    "ARHGDIB","SRGN","CST7","NKG7","CD3G","SPOCK2","DUSP2","S100A4","BTG1","PTPRCAP","FYN",
+    "CD164","RGCC","ITM2A","GPR183","CD48","HLA-A","RPL32","JUNB","MALAT1","RPL34","B2M",
+    "ANXA1","RPL21","RAC2","RPL22","IL2RG","PTGES3","CALM3","ICAM3","CRIP1","CALM1","RGS1",
+    "JAK1","ZFP36","STAT3","SOD1","RPS4Y1"
+  ),
+
+  B = c(
+    "MS4A1","HLA-DRA","HLA-DPB1","HLA-DQA1","HLA-DRB1","HLA-DPA1","HLA-DQB1","CD37","CD83",
+    "VPREB3","CD79A","CD52","LTB","CXCR4","HLA-DRB5","CD74","TCL1A","CD69","IGHD","CD19",
+    "SELL","CD48","CD53","BTG1","CD40","PLAC8","PTPRCAP","LYN","RAC2","EZR","CSK","KLF2",
+    "GPR183","COTL1","RPL22","RPL37","RPL34","RPL32","MALAT1","RPL21","PARP1","HLA-E",
+    "PTPRC","CD55","JUNB","MAP1LC3B","CD47","CD164","RGS2","RPS4Y1"
+  ),
+
+  Plasma = c(
+    "MZB1","FKBP11","CD79A","TNFRSF17","XBP1","IGHG1","CD27","HSP90B1","IGHG2","IGKC",
+    "IGHA1","DUSP5","SEC61G","CD38","HSPA1B","IGHM","JCHAIN","PNOC","GAS6","HSPA1A",
+    "ST6GAL1","HSPB1"
+  ),
+
+  Epithelial = c(
+    "KRT8","EPCAM","KRT18","PIGR","KRT19","AGR2","IFI27","CLDN4","SPINK1","S100P","CD9",
+    "TPM1","LCN2","LGALS3","LGALS3BP","CYSTM1","FCGBP","ANXA2","SFN","S100A10","PHLDA2",
+    "OLFM4","SLPI","ANXA4","CDH1","KRT20","CCL15","LEFTY1","ITGA6","ERBB3","B3GNT7",
+    "SERPINA1","CEACAM6","S100A6","PLAC8","CXCL3","RARRES1","CCL28","ITGB4","MAPK13",
+    "CEACAM1","DDR1","SOX9","IL18","DMBT1","GDF15","EFNB2","EFNA1","CD24","IL13RA1"
+  ),
+
+  Endothelial = c(
+    "SPARCL1","RAMP2","VWF","IGFBP7","MGP","TM4SF1","RAMP3","ENG","CLEC14A","CAV1","COL4A1",
+    "COL15A1","COL4A2","TGFBR2","ESAM","APP","CDH5","CD34","GSN","ACVRL1","FLT1","BMPR2",
+    "ITGA6","KDR","IL3RA","SERPINH1","PECAM1","ADGRL4","ITGA5","TIE1","INSR","ADGRF5","TEK",
+    "EFNA1","IGFBP3","ITGA1","LIFR","EFNB2","MECOM","FZD4","PDGFB","EPHB4","IL33","PTK2",
+    "JAG1","FZD6","NPR1","ADGRL2","ADGRG1","ANGPT2"
+  )
+)
+
+scRNAseq_non_inflamed_markers_list <- list(
+
+  Myeloid = c(
+    "TYROBP","LYZ","FCER1G","HLA-DPB1","HLA-DQA1","HLA-DRA","C1QA","HLA-DPA1","HLA-DRB1",
+    "C1QB","C1QC","HLA-DQB1","HLA-DRB5","IL1B","CD83","CD14","CCL3","COTL1","SLC40A1",
+    "CLEC10A","CLEC7A","PSAP","GLUL","TNFSF13B","MS4A4A","CSF1R","CD74","HCK","CD4",
+    "PTGS2","RB1","CXCL16","CD86","SAT1","CD36","GPNMB","CCL4","AHR","CXCL2","LYN",
+    "CLEC4A","S100A9","CD209","IGF1","CD68","CSF2RA","CD163","MMP12","CD300A","CXCL3"
+  ),
+
+  Connective = c(
+    "CALD1","IGFBP7","COL3A1","COL1A2","COL6A2","DCN","CXCL14","LUM","COL1A1","IFITM3",
+    "RARRES2","CFD","TPM2","COL6A1","MMP2","MYL9","FN1","CXCL12","BMP4","TIMP1","CCL2",
+    "IGFBP6","GPX3","MEG3","VCAN","COL6A3","IGFBP3","SERPINH1","MXRA8","TAGLN","PDGFRA",
+    "C11orf96","ACTA2","COL14A1","COL5A1","COL4A2","FOXF1","VCAM1","COL5A2","SNAI2",
+    "IGFBP5","IL1R1","MGP","CCL11","FGF7","CDH11","DDR2","PTGDS","COL4A1","WNT2B"
+  ),
+
+  Granulocyte = c(
+    "TPSAB1","CPA3","HPGDS","FCER1G","ANXA1","CTSG","TYROBP","CLU","KIT","CD69","GLUL",
+    "SRGN","CD9","S100A4","KRT1","TPSB2","STMN1","NFKBIA","IL1RL1","DUSP6","RGS1","LMNA",
+    "VIM","TNFSF10","CD83","CD44","IL2RG","CD63","JUN","HSP90AB1","EMP3","SOD1","ARHGDIB",
+    "TSC22D1","MALAT1","GSTP1","RPL34","DUSP1","FOS","HSP90AA1","CD59","SAT1","SQSTM1",
+    "HSPA1A","CALM3","RGS2","GADD45B","BST2","HSPA1B","CALM2"
+  ),
+
+  Neuron = c(
+    "CRYAB","CLU","S100B","IGFBP7","NRXN1","SPP1","CD9","SPARCL1","IFITM3","COL1A2",
+    "CCL2","COL18A1","COL9A3","MXRA8","ERBB3","TNFAIP6","COL8A1","IL11RA","DST","GSN",
+    "LGALS1","CD59","MT2A","COL4A1","S100A4","VIM","ANXA2","ANXA1","SOX4","COL4A2",
+    "APP","ADIRF","ITGB1","IER3","HSPA1A","STMN1","CD81","PSAP","HSPB1","TGFBR2",
+    "JUN","FOS","LAMP2","NDRG1","GSTP1","IL6ST","HMGB2","STAT3","BST2","KRT10"
+  ),
+
+  T = c(
+    "CD3E","CD3D","IL32","CD52","CD2","LTB","HCST","ARHGDIB","PTPRC","CD3G","IL7R",
+    "CXCR4","KLRB1","CCL5","S100A4","CD48","CD69","PTPRCAP","RAC2","CD37","SPOCK2","SRGN",
+    "CST7","COTL1","NKG7","ANXA1","GZMA","FYN","RORA","IL2RG","ITM2A","CD53","BTG1",
+    "ITGB2","GPR183","CTSW","DUSP2","RGCC","HLA-E","CALM1","HLA-A","RPL34","CD27",
+    "CLEC2B","NOSIP","CD44","TGFB1","RGS1","ICAM3","CRIP1"
+  ),
+
+  NK = c(
+    "IL32","KLRB1","CD52","CD2","HCST","CCL5","CD3D","LTB","CXCR4","PTPRC","ARHGDIB",
+    "IL7R","SRGN","S100A4","CD69","CST7","NKG7","GZMA","CD3G","PTPRCAP","ANXA1","FYN",
+    "CD48","CD37","DUSP2","RAC2","GPR183","BTG1","RGCC","MALAT1","B2M","ITM2A","HLA-A",
+    "COTL1","CD53","RPL32","PTGES3","HLA-B","HLA-E","RGS1","IL2RG","CD47","JUNB","HLA-C",
+    "MZT2A","CALM3","CLEC2B","CALM1","ICAM3","CD44"
+  ),
+
+  B = c(
+    "MS4A1","HLA-DPB1","HLA-DRA","HLA-DQA1","HLA-DPA1","HLA-DRB1","HLA-DQB1","CD79A",
+    "CD37","LTB","CD52","CXCR4","VPREB3","HLA-DRB5","CD83","CD74","TCL1A","IGHD","CD69",
+    "SELL","ARHGDIB","CD53","CD19","PTPRCAP","FCRLA","RAC2","PTPRC","CD48","GPR183",
+    "CD40","BTG1","KLF2","PLAC8","RPL37","COTL1","RPL32","HLA-E","RPL21","ARF1","RPL22",
+    "HLA-B","PARP1","CD55","EZR","MAP1LC3B","SMARCB1","ICAM3","JAK1","CD44","RGS2"
+  ),
+
+  Plasma = c(
+    "MZB1","TNFRSF17","CD79A","FKBP11","XBP1","CD27","IGKC","DUSP5","HSP90B1","CCR10",
+    "IFNAR2","SEC61G","ICAM2","IGHA1","IGHM","TNFRSF13B","CD38","HSPA1B","IGHG1","PNOC",
+    "IFNAR1","HSPA1A","JCHAIN"
+  ),
+
+  Epithelial = c(
+    "EPCAM","KRT8","KRT18","KRT19","PIGR","AGR2","CLDN4","IFI27","SPINK1","CD9","CYSTM1",
+    "TPM1","LGALS3","S100P","LGALS3BP","SFN","FCGBP","ANXA2","PHLDA2","LCN2","APP",
+    "SLPI","S100A10","KRT20","CDH1","ANXA4","LEFTY1","CCL15","MT2A","MT1X","LGALS9",
+    "B3GNT7","ERBB3","ITGA6","RARRES1","OLFM4","GDF15","PLAC8","SERPINA1","MAPK13",
+    "EFNA1","NDRG1","CEACAM1","DDR1","S100A6","CEACAM6","ATF3","CCL28","IL1R2","IL18"
+  ),
+
+  Endothelial = c(
+    "RAMP2","SPARCL1","RAMP3","TM4SF1","CAV1","CLEC14A","IGFBP7","ENG","ESAM","TGFBR2",
+    "VWF","MGP","IFITM3","FABP5","CD34","CD59","ACVRL1","FLT1","TSC22D1","ICAM2","CDH5",
+    "COL4A1","ADIRF","IL3RA","COL15A1","COL4A2","ITGA6","CD36","KDR","EFNA1","LIFR",
+    "NDRG1","BMPR2","ICAM1","ENTPD1","TIE1","TEK","ITGA1","COL18A1","ITGA5","IL33",
+    "CLU","MECOM","INSR","PECAM1","EFNB2","ADGRL4","TSHZ2","MX1","RGCC"
+  )
+)
+```
+
+#do the AUCell annotation
+```{r}
+#----------------#
+#----------------#
+#seperate the longitude samples into HC, inflamed and non-inflamed
+Idents(raw_1k_so) <- "Condition"
+raw_1k_so_HC <- subset(raw_1k_so, idents = "HC")
+raw_1k_so_inflamed <- subset(raw_1k_so, idents = c("PRE_VDZ_Responder", "PRE_VDZ_Non-responder", "VDZ_POST_Non-responder"))
+raw_1k_so_noninflamed <- subset(raw_1k_so, idents = "VDZ_POST_Responder")
+
+
+
+#Do AUCell labeling
+# do non-inflamed 
+exprMat <- as.matrix(GetAssayData(raw_1k_so_noninflamed, slot = "data", assay = "RNA"))
+cells_rankings <- AUCell_buildRankings(exprMat, plotStats = FALSE)
+cells_AUC <- AUCell_calcAUC(scRNAseq_non_inflamed_markers_list, cells_rankings,verbose = T)
+#cells_assignment <- AUCell_exploreThresholds(cells_AUC)
+auc_mat <- as.data.frame(getAUC(cells_AUC))
+cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
+names(cell_type_annotation) <- colnames(auc_mat)
+raw_1k_so_noninflamed$AUCell_1 <- cell_type_annotation
+
+#do inflamed
+exprMat <- as.matrix(GetAssayData(raw_1k_so_inflamed, slot = "data", assay = "RNA"))
+cells_rankings <- AUCell_buildRankings(exprMat, plotStats = FALSE)
+cells_AUC <- AUCell_calcAUC(scRNAseq_inflamed_markers_list, cells_rankings,verbose = T)
+#cells_assignment <- AUCell_exploreThresholds(cells_AUC)
+auc_mat <- as.data.frame(getAUC(cells_AUC))
+cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
+names(cell_type_annotation) <- colnames(auc_mat)
+raw_1k_so_inflamed$AUCell_1 <- cell_type_annotation
+
+#do HC
+exprMat <- as.matrix(GetAssayData(raw_1k_so_HC, slot = "data", assay = "RNA"))
+cells_rankings <- AUCell_buildRankings(exprMat, plotStats = FALSE)
+cells_AUC <- AUCell_calcAUC(scRNAseq_HC_markers_list, cells_rankings,verbose = T)
+#cells_assignment <- AUCell_exploreThresholds(cells_AUC)
+auc_mat <- as.data.frame(getAUC(cells_AUC))
+cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
+names(cell_type_annotation) <- colnames(auc_mat)
+raw_1k_so_HC$AUCell_1 <- cell_type_annotation
+
+#---------------
+#---------------
+#merge the three annotated objects back together
+list_10x_merge_AUCell <- merge(raw_1k_so_HC, y = c(raw_1k_so_inflamed, raw_1k_so_noninflamed))
+#will lost harmony reduction, match the annotation back
+df_1 <- list_10x_merge_AUCell@meta.data
+df_1$cell_id <- rownames(df_1)
+df_1 <- df_1[,c("cell_id", "AUCell_1")]
+
+df_2 <- raw_1k_so@meta.data
+df_2$cell_id <- rownames(df_2)
+
+df2 <- merge(df_2, df_1, by.x = "cell_id", by.y = "cell_id", all.x = TRUE)
+
+rownames(df2) <- df2$cell_id
+
+#sort df2 
+df2 <- df2[rownames(raw_1k_so@meta.data), ]#sorting makes the trick
+
+raw_1k_so$AUCell <- df2$AUCell_1
+
+rm(list_10x_merge_AUCell)
+
+#-----------------
+#-----------------
+#add SPP1 information
+spp1_expr <- FetchData(raw_1k_so, vars = "SPP1")
+raw_1k_so$SPP1_status <- ifelse(spp1_expr$SPP1 > 0, "SPP1+", "SPP1-")
+raw_1k_so$AUCell_SPP1 <- ifelse(raw_1k_so$SPP1_status == "SPP1+" & raw_1k_so$AUCell == "Myeloid", "Myeloid_SPP1+",
+                                     ifelse(raw_1k_so$SPP1_status == "SPP1-" & raw_1k_so$AUCell == "Myeloid", "Myeloid_SPP1-",
+                                            raw_1k_so$AUCell))
+```
+
+#do nnSVG spatial variable analysis
+```{r}
+#subset the dataset we only interested in the pre-treatment VDZ responder and non-responder
+Idents(raw_1k_so) <- "Condition"
+raw_1k_so_sub <- subset(raw_1k_so, idents = c( "PRE_VDZ_Responder", "PRE_VDZ_Non-responder"))
+
+#then we need to subset to max.panCK < 5000 (remove epithelials)
+raw_1k_so_sub <- subset(raw_1k_so, subset = Max.PanCK < 5000)
+
+#each FOV is very isolated from others in this dataset, need to do SVG analysis by FOV
+fov_list <- unique(raw_1k_so_sub$HS) #32 FOVs
+
+final_df <- list()  # initialize an empty list to store dataframes
+
+#run nnSVG workflow
+for (fov in c(fov_list[1:7], fov_list[9:32])){ #remove fov27 returns error
+  Idents(raw_1k_so_sub) <- "HS"
+  seu <- subset(raw_1k_so_sub, idents = fov)
+  #subset to remove epithelial cells
+  #Idents(seu) <- "AUCell"
+  #seu <- subset(seu, idents = "Epithelial", invert = T)
+  counts <- GetAssayData(seu, assay = "RNA", slot = "counts")
+  coords <- seu@meta.data[,c("CenterX_global_px", "CenterY_global_px")]
+  coords <- as.matrix(coords)
+  spe <- SpatialExperiment(
+  assays = list(counts = counts),
+  spatialCoords = coords,
+  colData = seu@meta.data)
+  rowData(spe)$gene_name <- rownames(spe)
+  #do nnSVG workflow
+  #spe <- filter_genes(spe)
+  spe <- computeLibraryFactors(spe)
+  spe <- logNormCounts(spe)
+
+  assayNames(spe)
+  set.seed(123)
+  spe <- nnSVG(spe, n_threads = 8, verbose = TRUE)
+
+  print(rowData(spe)[order(rowData(spe)$rank)[1:10], ])
+  print(table(rowData(spe)$padj <= 0.05))
+    
+  svg_res <- rowData(spe)[order(rowData(spe)$rank), ]
+
+  # Convert to data.frame and add 'sample' column
+  df_svg <- as.data.frame(svg_res)
+  df_svg$sample <- fov
+
+  # Store in the list
+  final_df[[fov]] <- df_svg
+
+  write.csv(svg_res, paste0('~/', fov,'_nnsvg_noepi_nonGeneFilter_CellTypeCoVar.csv'))
+}
+
+#combined_svg_results <- do.call(rbind, final_df)
+#write.csv(combined_svg_results, paste0('~/finalMergeDF_nnsvg_noepi_nonGeneFilter.csv'))
+```
+
+#process the nnSVG outcomes
+```{r}
+folder_path <- "~/"  # replace with your actual path
+# Get all files starting with "FOV" and ending in ".csv"
+responder_file_list <- list.files(path = folder_path, pattern = "Responder.*_noepi_nonGeneFilter_CellTypeCoVar\\.csv$", full.names = TRUE)
+nonresponder_file_list <- list.files(path = folder_path, pattern = "Non-responder.*_noepi_nonGeneFilter_CellTypeCoVar\\.csv$", full.names = TRUE)
+#file_list <- list.files(path = folder_path, pattern = "_noepi_nonGeneFilter\\.csv$", full.names = TRUE)
+
+# Read all CSV files into a list
+responder_csv_list <- lapply(responder_file_list, read.csv)
+nonresponder_csv_list <- lapply(nonresponder_file_list, read.csv)
+
+#add a column to each read in dataframe
+responder_csv_list <- lapply(responder_csv_list, function(df) {
+  df$condition <- "Responder"
+  return(df)
+})
+nonresponder_csv_list <- lapply(nonresponder_csv_list, function(df) {
+  df$condition <- "Non_responder"
+  return(df)
+})
+
+#merge everything
+sample_df <- do.call(rbind, c(responder_csv_list, nonresponder_csv_list))
+
+#---
+#summarize the nnSVG outcome
+summary_df <- sample_df %>%
+  group_by(gene_name) %>%
+  summarise(
+    mean_rank_responder = mean(rank[condition == "Responder"]),
+    mean_rank_nonresponder = mean(rank[condition == "Non_responder"]),
+    mean_diff = mean_rank_nonresponder - mean_rank_responder,
+    ratio_diff = ifelse(mean_rank_responder != 0,
+                        (mean_rank_nonresponder - mean_rank_responder) / mean_rank_responder,
+                        NA_real_),
+    pval = tryCatch(
+      wilcox.test(rank[condition == "Responder"],
+                  rank[condition == "Non_responder"])$p.value,
+      error = function(e) NA_real_
+    ),
+    .groups = "drop"
+  )
+
+
+write.csv(summary_df, file = "~/longitude_SVG_difference_baselineResNonRes_removeEpithelial_byPanCK.csv")
+
+```
+
+#do the volcano plot of the nnSVG outcomes
+```{r}
+library(ggrepel)
+#read in the nnSVG outcomes
+a <- read.csv("~/longitude_SVG_difference_baselineResNonRes_removeEpithelial_byPanCK.csv") 
+
+#need to reverse the -/+
+a$mean_diff <- 0-a$mean_diff
+
+genes_to_label <- c("TIE1", "ITGA5", "IL20", "CD40", "VEGFD","CHI3L1", "COL4A1", "SELENOP", "TYROBP", "CD9")
+label_df <- subset(a, gene_name %in% genes_to_label)
+#use x-axis to be rank difference and y to be log-transformed p-value
+  p2 <- ggplot(a, aes(x = mean_diff, y = -log10(pval))) +
+  geom_point(aes(color = mean_diff), size = 3, alpha = 0.9) +
+  #geom_vline(xintercept = c(-log2(1.5), log2(1.5)), linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    name = "mean_diff")+
+    theme_classic()+
+    geom_text_repel(data = label_df, aes(label = gene_name), size = 3,box.padding = 0.4,point.padding = 0.3,segment.color = "black",       
+    segment.size = 0.3,force = 2,                    # push labels away more strongly
+  max.overlaps = Inf,
+  min.segment.length = 0       )
+```
+
