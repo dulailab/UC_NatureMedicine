@@ -1,0 +1,82 @@
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(CellChat)
+library(ComplexHeatmap)
+library(SpatialExperiment)
+library(nnSVG)
+library(AUCell)
+```
+
+#CITE-seq analysis
+```{r}
+#the raw fastq files can be accessed through GEO GSE311585
+#the RNA, protein matrix and cell type annotation can be downloaded through 10.6084/m9.figshare.30729362
+# RNA counts
+rna_counts <- read.csv("~/RNA_raw_counts_UC.csv", row.names = 1, check.names = FALSE)
+rna_counts <- t(rna_counts)
+
+# Annotation metadata, annotation file was provided by colaborator
+annotation <- read.csv("~/annotation_table_UC.csv")
+rownames(annotation) <- annotation$X
+
+seu_citeseq <- CreateSeuratObject(rna_counts)
+#df <- seu_citeseq@meta.data
+annotation <- annotation[colnames(seu_citeseq), ]
+seu_citeseq <- AddMetaData(seu_citeseq, metadata = annotation)
+
+unique(seu_citeseq$RNA_annotation)
+
+#add ADT assay to the RNA object
+protein_counts <- read.csv("~/protein_raw_counts_UC.csv",row.names = 1, check.names = FALSE)
+protein_counts <- t(protein_counts)
+adt_assay <- CreateAssay5Object(counts = protein_counts)
+#seu_citeseq@assays$ADT <- adt_assay
+seu_citeseq[["ADT"]] <- adt_assay
+
+#add SPP1 expression level to myeloids 
+#set default assay to RNA
+DefaultAssay(seu_citeseq) <- "RNA"
+df <- FetchData(seu_citeseq, vars = "SPP1")
+df$SPP1_status <- ifelse(df$SPP1 > 0, "SPP1+", "SPP1-")
+seu_citeseq$SPP1_status <- df$SPP1_status
+
+#split the MoMac by SPP1 expression
+seu_citeseq$RNA_annotation_SPP1 <- ifelse(seu_citeseq$RNA_annotation == "myeloid" & seu_citeseq$SPP1_status == "SPP1+",
+                                            "SPP1+ Myeloid",ifelse(seu_citeseq$RNA_annotation == "myeloid" & seu_citeseq$SPP1_status == "SPP1-","SPP1- Myeloid", seu_citeseq$RNA_annotation))
+
+#process the ADT assay, only need to normalize the ADT assay
+DefaultAssay(seu_citeseq) <- "ADT"
+seu_citeseq <- NormalizeData(seu_citeseq, normalization.method = "CLR", margin = 2)
+
+#do vlnplot of figure 2H
+Idents(seu_citeseq) <- "RNA_annotation"
+seu_citeseq_myeloid <- subset(seu_citeseq, idents = "myeloid")
+
+DefaultAssay(seu_citeseq_myeloid) <- "ADT"
+itga4_expr <- FetchData(seu_citeseq_myeloid, vars = c("anti-human-CD49d", "anti-human-mouse-integrin-B7"))
+itga4_expr$group <- seu_citeseq_myeloid@meta.data$RNA_annotation_SPP1  # change "CellType" to your actual group column
+
+colnames(itga4_expr) <- c("CD49d", "integrinB7", "group")
+my_comparisons <- list( c("SPP1+ Myeloid", "SPP1- Myeloid"))
+p1 <- ggviolin(itga4_expr, x = "group", y = "integrinB7", fill = "group",
+         palette = c("#00AFBB", "#E7B800","red","lightgreen"),
+          add.params = list(fill = "white"),split = TRUE, #add = "boxplot",
+         )+ #ylim(-2, 4)+
+  stat_compare_means(comparisons = my_comparisons, 
+                     label = "p.signif",method = "wilcox.test")+ # Add significance levels
+  ggtitle("CITEseq ADT integrin-B7 (ITGB7)")
+
+p2 <- ggviolin(itga4_expr, x = "group", y = "CD49d", fill = "group",
+         palette = c("#00AFBB", "#E7B800","red","lightgreen"),
+          add.params = list(fill = "white"),split = TRUE, #add = "boxplot",
+         )+ #ylim(-2, 4)+
+  stat_compare_means(comparisons = my_comparisons, 
+                     label = "p.signif",method = "wilcox.test")+ # Add significance levels
+  ggtitle("CITEseq ADT integrin-a4 (CD49d)")
+
+#figure 2H
+```
+
