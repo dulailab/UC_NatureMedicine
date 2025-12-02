@@ -1,0 +1,164 @@
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(CellChat)
+library(ComplexHeatmap)
+library(SpatialExperiment)
+library(nnSVG)
+```
+
+#use the CosMx object from script '3_nonlongitdue_CosMx_processing_AUCellSets.Rmd', prepare the CCI inputs using CellChat
+```{r}
+#---#
+##1## read counts matrix
+#---#
+#obtain the input data of each sample
+data.input_list <- list()
+for(i in 1:9){
+  data.input_list[[i]] <- Seurat::GetAssayData(list_10x[[i]], slot = "data", assay = "SCT")
+}
+#rename the cells of each samples
+for(i in 1:9){
+  colnames(data.input_list[[i]]) <- paste0("A",i,"_", colnames(data.input_list[[i]]))
+}
+
+
+#generat the read maxtirx (SCT normalized) input for repsonders and non-responders
+data.input.control <- cbind(data.input_list[[1]], data.input_list[[2]], data.input_list[[3]], data.input_list[[4]])
+data.input.responder <- cbind(data.input_list[[5]], data.input_list[[6]], data.input_list[[7]])
+data.input.non_responder <- cbind(data.input_list[[8]], data.input_list[[9]])
+
+#---#
+##2## meta data
+#---#
+#generate the metadata for each sample and then for responders and non-responders
+meta.input_list <- list()
+for(i in 1:9){
+  Idents(list_10x[[i]]) <- "AUCell_SPP1"
+  meta.input_list[[i]] <- data.frame(labels = Idents(list_10x[[i]]), samples = paste("A",i,sep = ""))
+}
+meta.control <-  rbind(meta.input_list[[1]], meta.input_list[[2]], meta.input_list[[3]],meta.input_list[[4]])
+meta.responder <- rbind(meta.input_list[[5]], meta.input_list[[6]], meta.input_list[[7]])
+meta.non_responder <- rbind(meta.input_list[[8]], meta.input_list[[9]])
+
+rownames(meta.control) <- colnames(data.input.control)
+rownames(meta.responder) <- colnames(data.input.responder)
+rownames(meta.non_responder) <- colnames(data.input.non_responder)
+
+#order them by factoring
+meta.control$labels <- factor(meta.control$labels, levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.responder$labels <- factor(meta.responder$labels, levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.non_responder$labels <- factor(meta.non_responder$labels, , levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+
+meta.control$samples <- factor(meta.control$samples, levels = c("A1", "A2","A3","A4"))
+meta.responder$samples <- factor(meta.responder$samples, levels = c("A5","A6","A7"))
+meta.non_responder$samples <- factor(meta.non_responder$samples, levels = c("A8","A9"))
+
+#---#
+##3## the coordinates matrix
+#---#
+coordinates.input_list <- list()
+
+for(i in 1:9){
+  df <- list_10x[[i]]@meta.data
+  df <- df[,c("row", "col")]
+  coordinates.input_list[[i]] <- df
+}
+
+spatial.locs.control <- rbind(coordinates.input_list[[1]], coordinates.input_list[[2]], coordinates.input_list[[3]],coordinates.input_list[[4]])
+spatial.locs.res <- rbind(coordinates.input_list[[5]], coordinates.input_list[[6]], coordinates.input_list[[7]])
+spatial.locs.nonres <- rbind(coordinates.input_list[[8]], coordinates.input_list[[9]])
+
+rownames(spatial.locs.control) <- colnames(data.input.control)
+rownames(spatial.locs.res) <- colnames(data.input.responder)
+rownames(spatial.locs.nonres) <- colnames(data.input.non_responder)
+
+#turn into matrix
+spatial.locs.control <- as.matrix(spatial.locs.control)
+spatial.locs.res <- as.matrix(spatial.locs.res)
+spatial.locs.nonres <- as.matrix(spatial.locs.nonres)
+
+#---#
+##4## create the coordinates scale factor dataframe
+#---#
+conversion.factor = 0.18
+#d = computeCellDistance(spatial.locs.res) #Error: cannot allocate vector of size 2194.8 Gb ...NVM
+spot.size = 1.5 # ~1.5um per cell which is 0.0015mm per cell
+spatial.factors = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+spatial.factors <- rbind(spatial.factors, spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors)
+
+rownames(spatial.factors) <- c("A1","A2","A3","A4","A5","A6","A7","A8","A9")
+
+#---#
+##5## create the final cellchat objects
+#---#
+cellchat_CosMx_control <- createCellChat(object = data.input.control, meta = meta.control, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.control, spatial.factors = spatial.factors[c(1:4),])
+
+cellchat_CosMx_res <- createCellChat(object = data.input.responder, meta = meta.responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.res, spatial.factors = spatial.factors[c(5:7),])
+cellchat_CosMx_nonres <- createCellChat(object = data.input.non_responder, meta = meta.non_responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.nonres, spatial.factors = spatial.factors[c(8:9),])
+```
+
+#do the CCI analysis, we only care about the responder and non-responder
+```{r}
+CellChatDB <- CellChatDB.human # use CellChatDB.human if running on human data
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation") # use Secreted Signaling
+# set the used database in the object
+cellchat_CosMx_res@DB <- CellChatDB.use
+cellchat_CosMx_nonres@DB <- CellChatDB.use
+
+#do merged cellchat
+object.list <- list(responder = cellchat_CosMx_res, non_responder = cellchat_CosMx_nonres)
+
+#run the cellchat workflow
+for (i in 1:2){
+  object.list[[i]] <- subsetData(object.list[[i]]) # This step is necessary even if using the whole database
+#future::plan("multisession", workers = 4) 
+object.list[[i]] <- identifyOverExpressedGenes(object.list[[i]])
+object.list[[i]] <- identifyOverExpressedInteractions(object.list[[i]])
+
+object.list[[i]] <- computeCommunProb(object.list[[i]], type = "truncatedMean", trim = 0.1, 
+                              distance.use = FALSE, interaction.range = 250, scale.distance = NULL,
+                              contact.dependent = TRUE, contact.range = 100) 
+object.list[[i]] <- filterCommunication(object.list[[i]], min.cells = 10)
+object.list[[i]] <- computeCommunProbPathway(object.list[[i]])
+object.list[[i]] <- aggregateNet(object.list[[i]])
+}
+
+object.list[[1]] <- netAnalysis_computeCentrality(object.list[[1]], slot.name = "netP")
+object.list[[2]] <- netAnalysis_computeCentrality(object.list[[2]], slot.name = "netP")
+
+#merge the two condition for comparison
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+
+#----------------
+#figure 3B
+gg1 <- netVisual_heatmap(cellchat)
+
+#---
+#figure 3C
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax,dot.size = c(4, 12))
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg)
+p1 <- gg[[1]]+xlim(0,4)+ylim(0,4)
+p2 <- gg[[2]]+xlim(0,4)+ylim(0,4)
+
+#---
+#figure 3E
+i = 11 #representing cell type myeloids_spp1+ as sender (source)
+print(i)
+gg1 <- netVisual_bubble(cellchat, sources.use = i, targets.use = c(1:11),  comparison = c(1, 2), max.dataset = 2, title.name = "Increased signaling in non_responder", angle.x = 45, remove.isolate = T)
+```
+
