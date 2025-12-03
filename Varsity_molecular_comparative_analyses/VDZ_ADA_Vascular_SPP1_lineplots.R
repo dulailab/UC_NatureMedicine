@@ -8,16 +8,16 @@
 # Paths
 # ------------------------------------------------------------------
 project_dir <- getwd()
-fig2_dir <- file.path(project_dir, "Fig2")
+fig2_dir <- file.path(project_dir, "files")
 olink_data_dir <- file.path(fig2_dir, "Olink_data")
 dir.dat <- olink_data_dir
-dir.code <- file.path(fig2_dir, "code")
-dir.res <- file.path(fig2_dir, "results")
-dir.figures <- file.path(dir.res, "figures")
-
-dir.create(dir.code, recursive = TRUE, showWarnings = FALSE)
-dir.create(dir.res, recursive = TRUE, showWarnings = FALSE)
-dir.create(dir.figures, recursive = TRUE, showWarnings = FALSE)
+# dir.code <- file.path(fig2_dir, "code")
+# dir.res <- file.path(fig2_dir, "results")
+# dir.figures <- file.path(dir.res, "figures")
+# 
+# dir.create(dir.code, recursive = TRUE, showWarnings = FALSE)
+# dir.create(dir.res, recursive = TRUE, showWarnings = FALSE)
+# dir.create(dir.figures, recursive = TRUE, showWarnings = FALSE)
 
 # ------------------------------------------------------------------
 # Libraries and helper functions
@@ -116,7 +116,6 @@ response <- read.table(file.path(dir.dat, "outcome_response.csv"), header = TRUE
 md_clinical_all <- read.table(file.path(dir.dat, "PX_md_clinical.txt"), sep = "\t", header = TRUE)
 md_clinical_all$SampleID <- paste0("0", md_clinical_all$SampleID)
 row.names(md_clinical_all) <- md_clinical_all$SampleID
-md_clinical_all$Treatment <- gsub(" .*", "", md_clinical_all$TRT01P.Olink)
 md_clinical_all <- md_clinical_all %>%
   dplyr::mutate(PlateID = factor(case_when(
     PlateID == "Q-13795__flowcellposition_PA_SS240201_SP240234" ~ "Plate1",
@@ -143,7 +142,7 @@ nn <- colnames(npx_mat)
 nn <- gsub("X", "", nn)
 colnames(npx_mat) <- nn
 
-md_clinical_all <- md_clinical_all %>% dplyr::left_join(response, by = "Subject.ID")
+#md_clinical_all <- md_clinical_all %>% dplyr::left_join(response, by = "Subject.ID")
 md_clinical_all <- md_clinical_all[md_clinical_all$SampleID %in% colnames(npx_mat), ]
 md_clinical_all$Group <- paste0(md_clinical_all$Treatment, "_", md_clinical_all$Week)
 
@@ -174,18 +173,14 @@ responses <- c("R_W52")
 covariates_cols <- c("PlateID", "Subject.ID", "AGE", "SEX", "RACE", "COUNTRY", "TNFGR1", "CORTGR1", "CRPN", "BMI")
 
 md_clinical_list <- list()
-for (r in c("R_W14", "R_W14_CORT", "R_W52", "R_W52_CORT", "Histo_RW52", "Histo_RW52_CORT", "SustR", "SustR_CORT", "Endo_RW52", "Endo_RW52_CORT")) {
+r = "R_W52"
+for (r in c("R_W14", "R_W52")) {
   t_name <- gsub("_CORT", "", r)
 
   md_clinical <- md_clinical_all
   md_clinical$Group_Resp <- paste0(md_clinical$Treatment, "_", md_clinical$Week, "_", md_clinical[, t_name])
   md_clinical <- md_clinical[md_clinical$SampleID %in% colnames(npx_mat.invn), ]
   md_clinical_resp <- subset(md_clinical, grepl("Resp|Non_Resp", Group_Resp))
-
-  if (grepl("_CORT", r) == TRUE) {
-    md_clinical_resp <- md_clinical_resp[md_clinical_resp$CORTGR1 == "No", ]
-    md_clinical_resp <- md_clinical_resp[!is.na(md_clinical_resp$SampleID), ]
-  }
 
   md_clinical_resp <- md_clinical_resp %>% dplyr::select(all_of(covariates_cols), Group_Resp, SampleID)
   md_clinical_resp <- md_clinical_resp[complete.cases(md_clinical_resp), ]
@@ -195,7 +190,7 @@ for (r in c("R_W14", "R_W14_CORT", "R_W52", "R_W52_CORT", "Histo_RW52", "Histo_R
 }
 
 df_titles <- data.frame(
-  "t_names" = c("R_W14", "R_W14_CORT", "R_W52", "R_W52_CORT", "Histo_RW52", "Histo_RW52_CORT", "SustR", "SustR_CORT", "Endo_RW52", "Endo_RW52_CORT"),
+  "t_names" = c("R_W14","R_W52"),
   "title" = c("Clinical Response W14", "Clinical Response W14 (corticosteroid free)", "Clinical Remission W52", "Clinical Remission W52 (corticosteroid free)", "Histological Remission W52", "Histological Remission W52 (corticosteroid free)", "Sustained Clinical Remission", "Sustained Clinical Remission (corticosteroid free)", "Endoscopic Remission W52", "Endoscopic Remission W52 (corticosteroid free)"),
   "cap" = c("Clinical", "Clinical", "Clinical", "Clinical", "Histological", "Histological", "Clinical Sustained", "Clinical Sustained", "Endoscopic", "Endoscopic"),
   "week" = c("W14", "W14", "W52", "W52", "W52", "W52", "W14 and W52", "W14 and W52", "W52", "W52")
