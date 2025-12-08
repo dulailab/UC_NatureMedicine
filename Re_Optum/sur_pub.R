@@ -1,3 +1,4 @@
+#corresponding input datasets can be accessed through https://figshare.com/s/2844f9dcc8d85b641d26
 #Propensity score matching survival analysis for vedollizumab/anti-TNF/ustekinumab
 
 library(haven)
