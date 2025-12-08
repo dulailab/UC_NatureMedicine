@@ -14,7 +14,7 @@ library(AUCell)
 ```{r}
 #the aggregated, original count and coordinates matrix was downloaded from
 #https://figshare.com/s/da487c769a6040427695
-#processed merged Seurat object can be accessed through 10.6084/m9.figshare.30767693
+#processed merged Seurat object can be accessed through 10.6084/m9.figshare.30767693 or private link https://figshare.com/s/4cf61028e8151519b6a5
 
 #A = Control (n=4), C = UC vedolizumab responders (n=3), D = UC vedolizumab non-responders (n=2)
 
