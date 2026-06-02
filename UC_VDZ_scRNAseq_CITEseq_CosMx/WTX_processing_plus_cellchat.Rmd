@@ -1,0 +1,781 @@
+---
+title: "WTX_processing_plus_cellchat"
+author: "Katherine Simpson"
+date: "2026-06-02"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(AUCell)
+library(harmony)
+library(sctransform)
+library(ggplot2)
+library(patchwork)
+library(CellChat)
+
+
+options(future.globals.maxSize = 8000 * 1024^2*3)
+```
+
+```{r}
+seu.list <- lapply(seurat_paths, readRDS)
+```
+
+## QC filter
+```{r}
+# Add qcCellsPassed metadata column
+seu.list <- lapply(seu.list, function(seu) {
+  seu$qcCellsPassed <- seu$nFeature_RNA >= 200 & 
+                       seu$nCount_RNA >= 400 & 
+                       seu$nCount_RNA <= 11000 & 
+                       seu$nFeature_RNA <= 7000 & 
+                       seu$Area <= 30000
+  return(seu)
+})
+
+# Filter to only cells that passed QC
+new_seurats_clean <- lapply(seu.list, function(seu) {
+  subset(seu, subset = qcCellsPassed == TRUE)
+})
+
+```
+
+```{r}
+names(seu.list) <- basename(seurat_paths)  
+names(new_seurats_clean) <- names(seu.list)
+
+qc_summary <- data.frame(
+  sample = names(seu.list),
+  total_cells_original = sapply(seu.list, ncol),
+  total_cells_filtered = sapply(new_seurats_clean, ncol)
+)
+
+qc_summary$percent_filtered <- round(
+  (1 - qc_summary$total_cells_filtered / qc_summary$total_cells_original) * 100, 2
+)
+
+qc_summary
+
+write.csv(qc_summary, file = "qc_filtering_summary_newsamples.csv")
+```
+
+```{r}
+library(ggplot2)
+
+plot_qc_metrics <- function(seu, sample_name) {
+  df <- seu@meta.data
+  df$sample <- sample_name
+  
+  p1 <- ggplot(df, aes(x = sample, y = nFeature_RNA)) +
+    geom_violin(fill = "steelblue", alpha = 0.7) +
+    geom_hline(yintercept = c(200, 7000), color = "red", linetype = "dashed") +
+    labs(title = "nFeature_RNA", x = "", y = "nFeature_RNA") +
+    theme_classic()
+  
+  p2 <- ggplot(df, aes(x = sample, y = nCount_RNA)) +
+    geom_violin(fill = "steelblue", alpha = 0.7) +
+    geom_hline(yintercept = c(400, 11000), color = "red", linetype = "dashed") +
+    labs(title = "nCount_RNA", x = "", y = "nCount_RNA") +
+    theme_classic()
+  
+  p3 <- ggplot(df, aes(x = sample, y = Area)) +
+    geom_violin(fill = "steelblue", alpha = 0.7) +
+    geom_hline(yintercept = 30000, color = "red", linetype = "dashed") +
+    labs(title = "Area", x = "", y = "Area") +
+    theme_classic()
+  
+  (p1 | p2 | p3) 
+}
+
+qc_plots <- mapply(plot_qc_metrics, seu.list, names(seu.list), SIMPLIFY = FALSE)
+
+lapply(qc_plots, print)
+
+pdf("qc_metrics_before_filtering_newsamples.pdf", width = 12, height = 4)
+lapply(qc_plots, print)
+dev.off()
+
+```
+
+## Add in metadata for FOVs belonging to each sample
+```{r}
+flows_meta = read.csv("flows_meta.csv")
+
+seurat_names <- names(new_seurats_clean)
+
+# Fix leading/trailing whitespace in flows_meta sample names
+flows_meta$sample <- trimws(flows_meta$sample)
+
+# Re-derive fov_min and fov_max
+flows_meta <- flows_meta %>%
+  mutate(
+    FOV = ifelse(grepl("Jan", FOV), gsub("Jan-", "1-", FOV), FOV),
+    fov_min = as.numeric(sub("-.*", "", FOV)),
+    fov_max = as.numeric(sub(".*-", "", FOV))
+  )
+
+# Check
+flows_meta %>% filter(sample %in% c("AGS21-16129", "AGS15-6075", "WPS19-02322", "AGS19-04330", "AGS17-18785", "AGS20-03666")) %>%
+  select(sample, FOV, fov_min, fov_max)
+
+
+#match seurats to samples
+new_seurats_clean <- lapply(seurat_names, function(sname) {
+  seu <- new_seurats_clean[[sname]]
+  
+  # Find rows in flows_meta where the sample name appears in the seurat object name
+  meta_subset <- flows_meta %>%
+    filter(sapply(sample, function(s) grepl(gsub("-", ".", s), sname)))
+  
+  message("Sample: ", sname, " -> matched ", nrow(meta_subset), " rows in flows_meta")
+  
+  seu$sample <- "Unknown"
+  for(i in 1:nrow(meta_subset)) {
+    seu$sample[seu$fov >= meta_subset$fov_min[i] & 
+               seu$fov <= meta_subset$fov_max[i]] <- meta_subset$sample[i]
+  }
+  
+  return(seu)
+})
+names(new_seurats_clean) <- seurat_names
+
+# Check
+lapply(new_seurats_clean, function(seu) table(seu$sample))
+
+lapply(new_seurats_clean, function(seu) {
+  seu@meta.data %>%
+    group_by(sample) %>%
+    summarise(
+      fov_min = min(fov),
+      fov_max = max(fov),
+      unique_fovs = n_distinct(fov)
+    )
+}) %>% bind_rows()
+
+```
+
+```{r}
+saveRDS(new_seurats_clean, file = "new_seurats_postQC.rds")
+```
+
+## Remove MT genes, Apply SCTransform, Merge Seurats, Harmony
+
+```{r}
+# Load both lists
+seurats_clean <- readRDS("seurats_postQC.rds")
+new_seurats_clean <- readRDS("new_seurats_postQC.rds")
+
+# Combine into one list
+all_seurats <- c(seurats_clean, new_seurats_clean)
+
+# Strip images
+all_seurats <- lapply(all_seurats, function(seu) {
+  seu@images <- list()
+  return(seu)
+})
+
+saveRDS(all_seurats, file = "all_seurats.rds")
+
+# Load both lists
+all_seurats <- readRDS("all_seurats.rds")
+
+# Add percent.mt, percent.rb, remove MT genes, SCTransform
+all_seurats <- lapply(all_seurats, function(seu) {
+  
+  if(!"percent.mt" %in% colnames(seu@meta.data)) {
+    seu[["percent.mt"]] <- PercentageFeatureSet(seu, pattern = "^MT-", assay = "RNA")
+  }
+  if(!"percent.rb" %in% colnames(seu@meta.data)) {
+    seu[["percent.rb"]] <- PercentageFeatureSet(seu, pattern = "^RP[SL]", assay = "RNA")
+  }
+  
+  # Remove MT genes
+  non_mt_genes <- rownames(seu)[!grepl("^MT-", rownames(seu))]
+  seu <- seu[non_mt_genes, ]
+  
+  # SCTransform
+  seu <- SCTransform(seu, vars.to.regress = "percent.mt", verbose = FALSE)
+  
+  return(seu)
+})
+
+# Merge
+merged_seurat <- merge(x = all_seurats[[1]], 
+                       y = all_seurats[2:length(all_seurats)], 
+                       add.cell.ids = names(all_seurats),
+                       merge.data = TRUE)
+
+# Select variable features and run PCA
+features <- SelectIntegrationFeatures(object.list = all_seurats, nfeatures = 3000)
+VariableFeatures(merged_seurat) <- features
+
+merged_seurat <- RunPCA(merged_seurat, verbose = FALSE)
+merged_seurat <- RunUMAP(merged_seurat, reduction = "pca", dims = 1:30)
+
+saveRDS(merged_seurat, file = "merged_seurat_combined.rds")
+
+# Run Harmony integrating by sample
+harmonized_seurat <- RunHarmony(merged_seurat, "sample")
+harmonized_seurat <- RunUMAP(harmonized_seurat, reduction = "harmony", dims = 1:30)
+
+saveRDS(harmonized_seurat, file = "harmonized_seurat_combined.rds")
+```
+
+
+```{r}
+rm(seu.list, new_seurats_clean)
+```
+
+
+```{r}
+merged_seurat = readRDS("merged_seurat_combined.rds")
+```
+
+
+```{r}
+harmonized_seurat = readRDS("harmonized_seurat_combined.rds")
+```
+
+#Pre-harmony visualizations
+```{r}
+# Visualize PCA to see batch effects
+merged_seurat <- FindNeighbors(merged_seurat, reduction = "pca", dims = 1:30)
+merged_seurat <- FindClusters(merged_seurat, resolution = 0.2)
+
+p1 = DimPlot(merged_seurat, reduction = "pca", group.by = "sample", 
+              pt.size = 0.5) + ggtitle("PCA before Harmony")
+print(p1)
+
+# Elbow plot to determine number of PCs
+p2 = ElbowPlot(merged_seurat, ndims = 50)
+print(p2)
+
+
+p3 = DimPlot(merged_seurat, reduction = "umap", group.by = "sample", 
+              pt.size = 0.5) + ggtitle("UMAP before Harmony - by Sample") + theme(aspect.ratio = 1)
+p4 = DimPlot(merged_seurat, reduction = "umap", group.by = "seurat_clusters", 
+              pt.size = 0.5, label = TRUE) + ggtitle("Clusters before Harmony") + theme(aspect.ratio = 1)
+print(p3)
+print(p4)
+```
+
+#Post Harmony visualization
+```{r}
+harmonized_seurat <- FindNeighbors(harmonized_seurat, reduction = "harmony", dims = 1:30)
+harmonized_seurat <- FindClusters(harmonized_seurat, resolution = 0.2)
+
+
+p6 = DimPlot(harmonized_seurat, reduction = "pca", group.by = "sample", 
+              pt.size = 0.5) + ggtitle("PCA before Harmony") 
+p7 = DimPlot(harmonized_seurat, reduction = "harmony", group.by = "sample", 
+              pt.size = 0.5) + ggtitle("Harmony embeddings")
+p8 = DimPlot(harmonized_seurat, reduction = "umap", group.by = "sample", 
+              pt.size = 0.5
+              ) + ggtitle("UMAP after Harmony - by Sample") + theme(aspect.ratio = 1)
+p9 = DimPlot(harmonized_seurat, reduction = "umap", group.by = "seurat_clusters", 
+              pt.size = 0.5,
+               label = TRUE) + ggtitle("Clusters after Harmony") + theme(aspect.ratio = 1)
+
+print(p6)
+print(p7)
+print(p8)
+print(p9)
+```
+
+```{r}
+png("umap_before_harmony_all.png", width = 800, height = 600)
+print(p3)
+dev.off()
+
+png("clusters_before_harmony_all.png", width = 800, height = 600)
+print(p4)
+dev.off()
+
+png("umap_after_harmony_all.png", width = 800, height = 600)
+print(p8)
+dev.off()
+
+png("clusters_after_harmony_all.png", width = 800, height = 600)
+print(p9)
+dev.off()
+```
+
+```{r}
+pdf("umap_before_harmony_all.pdf", width = 8, height = 6)
+print(p3)
+dev.off()
+
+pdf("clusters_before_harmony_all.pdf", width = 8, height = 6)
+print(p4)
+dev.off()
+
+pdf("umap_after_harmony_all.pdf", width = 8, height = 6)
+print(p8)
+dev.off()
+
+pdf("clusters_after_harmony_all.pdf", width = 8, height = 6)
+print(p9)
+dev.off()
+```
+
+## Post-Harmony Clusters
+
+```{r}
+# Run FindNeighbors 
+harmonized_seurat <- FindNeighbors(harmonized_seurat, reduction = "harmony", dims = 1:30)
+
+# Define resolutions to test
+resolutions <- c(0.1, 0.2, 0.3, 0.5)
+
+# Run FindClusters for all resolutions at once
+# Seurat stores each as "RNA_snn_res.X" in metadata
+harmonized_seurat <- FindClusters(harmonized_seurat, resolution = resolutions)
+
+# Plot a UMAP for each resolution
+plots <- lapply(resolutions, function(res) {
+  col_name <- paste0("SCT_snn_res.", res)
+  n_clusters <- length(unique(harmonized_seurat@meta.data[[col_name]]))
+  
+  DimPlot(
+    harmonized_seurat,
+    group.by  = col_name,
+    reduction = "umap",
+    label     = TRUE,
+    repel     = TRUE
+  ) +
+    ggtitle(paste0("Resolution: ", res, "  |  Clusters: ", n_clusters)) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 11, face = "bold"))
+})
+
+# Arrange in a grid (2 columns)
+wrap_plots(plots, ncol = 2)
+
+```
+
+## Assign Cell Type Names
+
+```{r}
+# ── 0. Make res 0.2 clusters the active identity ──────────────────────
+Idents(harmonized_seurat) <- "SCT_snn_res.0.2"
+harmonized_seurat$seurat_clusters <- harmonized_seurat$SCT_snn_res.0.2
+
+# ── Flag trash cells in metadata only  ────────────────────────
+harmonized_seurat$keep <- !harmonized_seurat$seurat_clusters %in% c("11", "18")
+table(harmonized_seurat$keep)  # confirm how many cells are being dropped
+
+# ── Get barcodes to keep ───────────────────────────────────────────────────────
+cells_keep <- colnames(harmonized_seurat)[harmonized_seurat$keep]
+cat("Keeping", length(cells_keep), "cells\n")
+
+# ──  subset ────────────────────────────────────────────────────────────────
+harmonized_seurat <- harmonized_seurat[, cells_keep]
+
+# ── 2. Get SPP1 counts for cluster 5 cells ────────────────────────────────────
+spp1_counts <- GetAssayData(harmonized_seurat, layer = "counts")["SPP1", ]
+
+# ── 3. Label cluster 5 cells as SPP1+ or SPP1- ────────────────────────────────
+harmonized_seurat$cluster_SPP1 <- ifelse(
+  harmonized_seurat$seurat_clusters == "5",
+  ifelse(spp1_counts > 0, "Positive", "Negative"),
+  NA
+)
+table(harmonized_seurat$cluster_SPP1, useNA = "ifany")
+
+# ── 4. Define cell type labels ────────────────────────────────────────────────
+cluster_labels <- c(
+  "0"  = "Lymphocytes",
+  "1"  = "Epithelial",
+  "2"  = "Fibroblasts",
+  "3"  = "Plasma",
+  "4"  = "Epithelial",
+  "5"  = NA,              # handled via SPP1 split
+  "6"  = "Plasma",
+  "7"  = "Endothelial",
+  "8"  = "Plasma",
+  "9"  = "Plasma",
+  "10" = "Mast_cells",
+  "12" = "Fibroblasts",
+  "13" = "Fibroblasts",
+  "14" = "Epithelial",
+  "15" = "Epithelial",
+  "16" = "Epithelial",
+  "17" = "Plasma"
+)
+
+# ── 5. Build cluster_for_cellchat ─────────────────────────────────────────────
+harmonized_seurat$cluster_for_cellchat <- ifelse(
+  harmonized_seurat$seurat_clusters == "5",
+  paste0("Macrophage_SPP1_", harmonized_seurat$cluster_SPP1),
+  cluster_labels[as.character(harmonized_seurat$seurat_clusters)]
+)
+
+# ── 6. Sanity checks ──────────────────────────────────────────────────────────
+# Distribution of final labels
+table(harmonized_seurat$cluster_for_cellchat, useNA = "ifany")
+
+# Confirm trash clusters are gone
+stopifnot(!any(harmonized_seurat$seurat_clusters %in% c("11", "18")))
+
+# Confirm no unexpected NAs (only Macrophage NAs should be resolved by SPP1 split)
+stopifnot(!any(is.na(harmonized_seurat$cluster_for_cellchat)))
+
+# ── 7. UMAP of final labels ───────────────────────────────────────────────────
+DimPlot(harmonized_seurat, group.by = "cluster_for_cellchat",
+        reduction = "umap", label = TRUE, repel = TRUE) +
+  ggtitle("Clusters for CellChat") +
+  theme(legend.position = "right")
+```
+
+
+
+## Dot Plot + Marker Table: Top 5 DEGs per Cluster
+```{r}
+clusters <- sort(unique(harmonized_seurat$seurat_clusters))
+message(sprintf("Clusters found: %s", paste(clusters, collapse = ", ")))
+
+message("Running FindAllMarkers...")
+markers_all <- FindAllMarkers(
+  harmonized_seurat,
+  assay            = "RNA",
+  only.pos         = TRUE,
+  min.pct          = 0.25,
+  logfc.threshold  = 0.25,
+  test.use         = "wilcox"
+)
+```
+
+```{r}
+# ── Filter + Top 5 per cluster ────────────────────────────
+
+markers_sig <- markers_all %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(cluster, desc(avg_log2FC))
+
+top5 <- markers_sig %>%
+  group_by(cluster) %>%
+  slice_head(n = 5) %>%
+  ungroup()
+
+# Ordered gene list — grouped by cluster
+genes_ordered <- top5 %>%
+  arrange(as.numeric(as.character(cluster))) %>%
+  pull(gene) %>%
+  unique()
+
+message(sprintf("Genes in dot plot: %d", length(genes_ordered)))
+
+# ── 4. Dot Plot ───────────────────────────────────────────────
+
+# Order clusters numerically on Y axis
+Idents(harmonized_seurat) <- factor(
+  harmonized_seurat$seurat_clusters,
+  levels = rev(sort(unique(harmonized_seurat$seurat_clusters)))
+)
+
+p <- DotPlot(
+  harmonized_seurat,
+  features  = genes_ordered,
+  assay     = "RNA",
+  cols      = c("lightgrey", "#B2182B"),
+  dot.scale = 6,
+  scale     = TRUE
+) +
+  theme(
+    axis.text.x  = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                 size = 7, face = "italic"),
+    axis.text.y  = element_text(size = 10, face = "bold"),
+    legend.position  = "right",
+    legend.key.size  = unit(0.4, "cm"),
+    panel.grid.major = element_line(colour = "grey90", linewidth = 0.3),
+    plot.title   = element_text(size = 13, face = "bold"),
+    plot.subtitle = element_text(size = 9, colour = "grey40")
+  ) +
+  labs(
+    title    = "Top 5 DEGs per Seurat Cluster",
+    subtitle = "Log-normalized, z-scored | Wilcoxon, padj < 0.05",
+    x = NULL,
+    y = "Cluster"
+  ) +
+  # Dashed vertical lines separating each cluster's genes
+  geom_vline(
+    xintercept = seq(5, length(genes_ordered) - 1, by = 5) + 0.5,
+    linetype   = "dashed",
+    colour     = "grey60",
+    linewidth  = 0.35
+  )
+
+# Dynamic width based on number of genes
+plot_width <- max(12, length(genes_ordered) * 0.22 + 4)
+
+ggsave("dotplot_clusters.pdf",
+       plot = p, width = plot_width, height = 7, units = "in")
+
+ggsave("dotplot_clusters.png",
+       plot = p, width = plot_width, height = 7, units = "in", dpi = 300)
+
+message("✓ Saved: dotplot_clusters.pdf / .png")
+
+# ── 5. Marker Table ───────────────────────────────────────────
+
+# Clean, formatted table of top 5 markers per cluster
+marker_table <- top5 %>%
+  select(
+    Cluster      = cluster,
+    Gene         = gene,
+    Log2FC       = avg_log2FC,
+    Pct_Expr_Cluster = pct.1,
+    Pct_Expr_Other   = pct.2,
+    Adj_Pvalue   = p_val_adj
+  ) %>%
+  mutate(
+    Log2FC     = round(Log2FC, 3),
+    Adj_Pvalue = formatC(Adj_Pvalue, format = "e", digits = 2)
+  ) %>%
+  arrange(as.numeric(as.character(Cluster)), desc(Log2FC))
+
+# Save as CSV
+write.csv(marker_table, "cluster_marker_table_top5.csv", row.names = FALSE)
+
+write.csv(markers_sig, "cluster_markers_all_sig.csv", row.names = FALSE)
+
+# Print summary to console
+message("\n── Top 5 Markers per Cluster ──────────────────────────")
+for (cl in sort(unique(marker_table$Cluster))) {
+  cat(sprintf("\nCluster %s:\n", cl))
+  sub <- marker_table %>% filter(Cluster == cl)
+  print(as.data.frame(sub), row.names = FALSE)
+}
+```
+
+## CellChat
+
+```{r}
+#---#
+## read counts matrix
+#---#
+
+# Extract SCT data matrix for each sample and rename cells
+data.input_list <- list()
+for(s in unique(harmonized_seurat$sample)){
+  cells <- WhichCells(harmonized_seurat, expression = sample == s)
+  mat <- Seurat::GetAssayData(harmonized_seurat, slot = "data", assay = "SCT")[, cells]
+  colnames(mat) <- paste0(s, "_", colnames(mat))
+  data.input_list[[s]] <- mat
+}
+
+# Responders
+data.input.responder <- cbind(
+  data.input_list[["AGS18-05009"]],
+  data.input_list[["AGS19-13043"]],
+  data.input_list[["WPS17-15624"]],
+  data.input_list[["WPS19-04204"]],
+  
+  data.input_list[["AGS21-16129"]],
+  data.input_list[["AGS15-6075"]],
+  data.input_list[["AGS19-04330"]],
+  data.input_list[["WPS19-02322"]]
+)
+
+# Non-responders
+data.input.non_responder <- cbind(
+  data.input_list[["AGS18-00413"]],
+  data.input_list[["AGS19-14722"]],
+  data.input_list[["AGS20-09037"]],
+  data.input_list[["SVS21-12350"]],
+  
+  data.input_list[["AGS17-11762"]],
+  data.input_list[["AGS22-00104"]],
+  data.input_list[["AGS17-18785"]],
+  data.input_list[["AGS20-03666"]]
+)
+
+
+#---#
+## generate metadata
+#---#
+
+# Build metadata list per sample
+meta.input_list <- list()
+for(s in unique(harmonized_seurat$sample)){
+  cells <- WhichCells(harmonized_seurat, expression = sample == s)
+  meta.input_list[[s]] <- data.frame(
+    labels  = harmonized_seurat$cluster_for_cellchat[cells],
+    samples = s,
+    row.names = paste0(s, "_", cells)  # matches renamed barcodes from step 1
+  )
+}
+
+# Combine by condition
+meta.responder <- rbind(
+  meta.input_list[["AGS18-05009"]],
+  meta.input_list[["AGS19-13043"]],
+  meta.input_list[["WPS17-15624"]],
+  meta.input_list[["WPS19-04204"]],
+  
+  meta.input_list[["AGS21-16129"]],
+  meta.input_list[["AGS15-6075"]],
+  meta.input_list[["AGS19-04330"]],
+  meta.input_list[["WPS19-02322"]]
+)
+
+meta.non_responder <- rbind(
+  meta.input_list[["AGS18-00413"]],
+  meta.input_list[["AGS19-14722"]],
+  meta.input_list[["AGS20-09037"]],
+  meta.input_list[["SVS21-12350"]],
+  
+  meta.input_list[["AGS17-11762"]],
+  meta.input_list[["AGS22-00104"]],
+  meta.input_list[["AGS17-18785"]],
+  meta.input_list[["AGS20-03666"]]
+)
+
+# Set rownames to match renamed cell barcodes from data.input objects
+rownames(meta.responder)     <- colnames(data.input.responder)
+rownames(meta.non_responder) <- colnames(data.input.non_responder)
+
+# Check your cell type names to fill in the levels below
+print(unique(harmonized_seurat$cluster_for_cellchat))
+
+# Extract cell type levels directly from the data
+celltypes <- sort(unique(harmonized_seurat$cluster_for_cellchat))
+
+meta.responder$labels    <- factor(meta.responder$labels,    levels = celltypes)
+meta.non_responder$labels <- factor(meta.non_responder$labels, levels = celltypes)
+
+# Factor samples
+meta.responder$samples <- factor(meta.responder$samples,
+                                 levels = c("AGS18-05009","AGS19-13043","WPS17-15624","WPS19-04204",
+                                            "AGS21-16129","AGS15-6075","AGS19-04330","WPS19-02322"))
+meta.non_responder$samples <- factor(meta.non_responder$samples,
+                                     levels = c("AGS18-00413","AGS19-14722","AGS20-09037","SVS21-12350",
+                                                "AGS17-11762","AGS22-00104","AGS17-18785","AGS20-03666"))
+#---#
+## the coordinates matrix
+#---#
+
+# Extract coordinates per sample
+coordinates.input_list <- list()
+for(s in unique(harmonized_seurat$sample)){
+  cells <- WhichCells(harmonized_seurat, expression = sample == s)
+  df <- harmonized_seurat@meta.data[cells, c("x_slide_mm", "y_slide_mm")]
+  rownames(df) <- paste0(s, "_", rownames(df))  # match renamed barcodes
+  coordinates.input_list[[s]] <- df
+}
+
+# Combine by condition
+spatial.locs.responder <- rbind(
+  coordinates.input_list[["AGS18-05009"]],
+  coordinates.input_list[["AGS19-13043"]],
+  coordinates.input_list[["WPS17-15624"]],
+  coordinates.input_list[["WPS19-04204"]],
+  
+  coordinates.input_list[["AGS21-16129"]],
+  coordinates.input_list[["AGS15-6075"]],
+  coordinates.input_list[["AGS19-04330"]],
+  coordinates.input_list[["WPS19-02322"]]
+)
+
+spatial.locs.non_responder <- rbind(
+  coordinates.input_list[["AGS18-00413"]],
+  coordinates.input_list[["AGS19-14722"]],
+  coordinates.input_list[["AGS20-09037"]],
+  coordinates.input_list[["SVS21-12350"]],
+  
+  coordinates.input_list[["AGS17-11762"]],
+  coordinates.input_list[["AGS22-00104"]],
+  coordinates.input_list[["AGS17-18785"]],
+  coordinates.input_list[["AGS20-03666"]]
+)
+
+# Set rownames to match expression matrices
+rownames(spatial.locs.responder)    <- colnames(data.input.responder)
+rownames(spatial.locs.non_responder) <- colnames(data.input.non_responder)
+
+# Turn into matrix
+spatial.locs.responder    <- as.matrix(spatial.locs.responder)
+spatial.locs.non_responder <- as.matrix(spatial.locs.non_responder)
+
+#---#
+## create the coordinates scale factor dataframe
+#---#
+conversion.factor = 1
+spatial.factors = data.frame(ratio = conversion.factor, tol = 0.0015/2)
+
+# One row per sample — replicate to match number of samples
+spatial.factors <- do.call(rbind, replicate(length(unique(harmonized_seurat$sample)),
+                                             spatial.factors, simplify = FALSE))
+rownames(spatial.factors) <- unique(harmonized_seurat$sample)
+
+
+#---#
+## create the final cellchat objects
+#---#
+cellchat_responder <- createCellChat(
+  object          = data.input.responder,
+  meta            = meta.responder,
+  group.by        = "labels",
+  datatype        = "spatial",
+  coordinates     = spatial.locs.responder,
+  spatial.factors = spatial.factors[1:8, ]  # 8 responder samples
+)
+
+cellchat_non_responder <- createCellChat(
+  object          = data.input.non_responder,
+  meta            = meta.non_responder,
+  group.by        = "labels",
+  datatype        = "spatial",
+  coordinates     = spatial.locs.non_responder,
+  spatial.factors = spatial.factors[1:8, ]  # 8 non-responder samples
+)
+
+saveRDS(cellchat_responder, file = "cellchat_responder_allsamples.rds")
+saveRDS(cellchat_non_responder, file = "cellchat_non_responder_allsamples.rds")
+
+#---#
+## run cellchat
+#---#
+
+# Set database
+CellChatDB <- CellChatDB.human
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation")
+cellchat_responder@DB <- CellChatDB.use
+cellchat_non_responder@DB <- CellChatDB.use
+
+# Process each object
+object.list <- list(R = cellchat_responder, NR = cellchat_non_responder)
+for (i in 1:2) {
+  object.list[[i]] <- subsetData(object.list[[i]])
+  object.list[[i]] <- identifyOverExpressedGenes(object.list[[i]])
+  object.list[[i]] <- identifyOverExpressedInteractions(object.list[[i]])
+  object.list[[i]] <- computeCommunProb(object.list[[i]], type = "truncatedMean", trim = 0.1,
+                                        distance.use = FALSE, interaction.range = 250, scale.distance = NULL,
+                                        contact.dependent = TRUE, contact.range = 100)
+  object.list[[i]] <- filterCommunication(object.list[[i]], min.cells = 10)
+  object.list[[i]] <- computeCommunProbPathway(object.list[[i]])
+  object.list[[i]] <- aggregateNet(object.list[[i]])
+}
+object.list[[1]] <- netAnalysis_computeCentrality(object.list[[1]], slot.name = "netP")
+object.list[[2]] <- netAnalysis_computeCentrality(object.list[[2]], slot.name = "netP")
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+
+saveRDS(object.list, "cellchat_object_list_allsamples.rds")
+saveRDS(cellchat, "cellchat_merged_allsamples.rds")
+
+# Signaling role scatter plots  - R
+png("signaling_role_R_8.png", width = 800, height = 600)
+netAnalysis_signalingRole_scatter(object.list[["R"]]) + ggtitle("Signaling Roles - R")
+dev.off()
+
+#Signaling role scatter plots - NR
+png("signaling_role_NR_8.png", width = 800, height = 600)
+netAnalysis_signalingRole_scatter(object.list[["NR"]]) + ggtitle("Signaling Roles - NR")
+dev.off()
+```
+
+
+
