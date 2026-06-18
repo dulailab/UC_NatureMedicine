@@ -1,0 +1,83 @@
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+#read in the non-longitude CosMx nnSVg
+non_longitude_summary_df <- read.csv('~/finalSummary_nnsvg_noepi_nonGeneFilter_nonlongitude.csv')
+longitude_summary_df <- read.csv('~/finalSummary_nnsvg_noepi_nonGeneFilter_longitude.csv')
+
+df_merge <- merge(x = non_longitude_summary_df, y = longitude_summary_df, by.x = "gene_name", by.y = "gene_name", all = TRUE)
+df_merge$X <- NULL
+colnames(df_merge) <- gsub("\\.x$", "_non-longitudinal", colnames(df_merge))
+colnames(df_merge) <- gsub("\\.y$", "_longitudinal", colnames(df_merge))
+
+df_merge$note <- case_when(df_merge$`mean_diff_non-longitudinal` <0 & df_merge$mean_diff_longitudinal <0 ~ "mean_diff < 0 in both",
+                           df_merge$`mean_diff_non-longitudinal` >0 & df_merge$mean_diff_longitudinal >0 ~ "mean_diff > 0 in both",
+                           df_merge$`mean_diff_non-longitudinal` <0 & df_merge$mean_diff_longitudinal >0 ~ "mean_diff inconsistent",
+                           df_merge$`mean_diff_non-longitudinal` >0 & df_merge$mean_diff_longitudinal <0 ~ "mean_diff inconsistent")
+
+#genes with "mean_diff < 0 in both" were used for Metascape input
+df_merge_sub <- df_merge %>% filter(note == "mean_diff < 0 in both")
+df_merge_sub$gene_name
+
+# [1] "ACE"       "ACKR3"     "ACVR2A"    "ACVRL1"    "ADGRA2"    "ADGRE5"    "ADGRG1"    "ADGRV1"    "ADIPOQ"    "AHR"      
+#  [11] "ANGPT2"    "APOA1"     "APOD"      "B2M"       "BAG3"      "BAX"       "BCL2"      "BCL2L1"    "BMPR1A"    "BTG1"     
+#  [21] "BTK"       "C11orf96"  "CALB1"     "CALD1"     "CCL13"     "CCL18"     "CCL20"     "CCL21"     "CCL8"      "CD19"     
+#  [31] "CD209"     "CD27"      "CD274"     "CD276"     "CD28"      "CD300A"    "CD37"      "CD38"      "CD3D"      "CD3E"     
+#  [41] "CD40"      "CD44"      "CD63"      "CD68"      "CD74"      "CD79A"     "CD80"      "CD81"      "CD8B"      "CEACAM6"  
+#  [51] "CHI3L1"    "CLEC14A"   "CLEC1A"    "CLEC5A"    "CLU"       "COL11A1"   "COL12A1"   "COL14A1"   "COL15A1"   "COL16A1"  
+#  [61] "COL27A1"   "COL4A1"    "COL5A3"    "COL6A2"    "COTL1"     "CRYAB"     "CSF1"      "CSF1R"     "CSF2RB"    "CSF3R"    
+#  [71] "CSK"       "CTLA4"     "CXCL8"     "CXCR5"     "CXCR6"     "CYP1B1"    "CYSTM1"    "DDX58"     "DPP4"      "DUSP4"    
+#  [81] "EFNA5"     "ENG"       "EOMES"     "ETV4"      "FABP5"     "FCER1G"    "FES"       "FGF2"      "FGF9"      "FGFR1"    
+#  [91] "FLT1"      "FOXF1"     "FPR1"      "FYB1"      "FZD1"      "FZD6"      "FZD8"      "GADD45B"   "GC"        "GPX3"     
+# [101] "GSN"       "GZMA"      "GZMB"      "GZMH"      "GZMK"      "HAVCR2"    "HDAC1"     "HDAC11"    "HDAC3"     "HIF1A"    
+# [111] "HILPDA"    "HLA-DPB1"  "HLA-DRA"   "HSD17B2"   "HSPB1"     "ICAM2"     "ICOS"      "ICOSLG"    "IDO1"      "IFITM1"   
+# [121] "IGFBP7"    "IGKC"      "IL10"      "IL11RA"    "IL15"      "IL16"      "IL17D"     "IL18"      "IL1R1"     "IL1R2"    
+# [131] "IL2"       "IL2RA"     "IL2RB"     "IL32"      "IL4R"      "IL7"       "INS"       "ITGA1"     "ITGA3"     "ITGA5"    
+# [141] "ITGA9"     "ITGAM"     "ITGB1"     "ITK"       "ITM2A"     "JAG1"      "KDR"       "KITLG"     "KLF2"      "KLRB1"    
+# [151] "KLRK1"     "KRAS"      "KRT7"      "LTF"       "LYN"       "MAPK13"    "MAPK14"    "MGP"       "MMP1"      "MMP9"     
+# [161] "MRC1"      "MS4A1"     "MX1"       "NCR1"      "NLRC4"     "NLRP3"     "NPR3"      "NR1H2"     "NRXN1"     "NTRK2"    
+# [171] "OLR1"      "OSM"       "OSMR"      "P2RX5"     "PDGFRA"    "PRF1"      "PSCA"      "PTGDR2"    "PTGDS"     "PTGES"    
+# [181] "PTGS2"     "PTK2"      "PTPRCAP"   "RAC2"      "RAMP1"     "RARRES2"   "RB1"       "RGS1"      "RGS5"      "RPL21"    
+# [191] "RPL32"     "RPL34"     "RXRA"      "RXRB"      "S100A8"    "S100P"     "SAT1"      "SCGB3A1"   "SEC61G"    "SELL"     
+# [201] "SELPLG"    "SERPINA3"  "SFN"       "SNAI2"     "SOD2"      "SPOCK2"    "SPP1"      "SQSTM1"    "ST6GAL1"   "STMN1"    
+# [211] "TACSTD2"   "TAGLN"     "TGFBR2"    "THBS1"     "TIE1"      "TIGIT"     "TLR3"      "TLR5"      "TLR7"      "TLR8"     
+# [221] "TNFAIP6"   "TNFRSF11B" "TNFRSF19"  "TNFRSF1B"  "TNFRSF21"  "TNFSF10"   "TNFSF13B"  "TOP2A"     "TOX"       "TPM2"     
+# [231] "TWIST2"    "TYK2"      "UPK3A"     "VEGFA"     "VEGFD"     "VHL"       "VPREB3"    "WNT9A"     "ZFP36"
+```
+
+#dotplot for figure 3G
+```{r}
+#use the Metascape output for GO enrichment analysis
+
+df_go <- read.csv("~/Enrichment_GO/_FINAL_GO.csv")
+df_go <- df_go %>% filter(Description %in% c("Cytokine-cytokine receptor interaction",
+                                             "positive regulation of cytokine production",
+                                             "cell activation",
+                                             "Cytokine Signaling in Immune system",
+                                             "inflammatory response",
+                                             "positive regulation of immune response",
+                                             "PI3K-Akt signaling pathway",
+                                             "positive regulation of locomotion",
+                                             "angiogenesis",
+                                             "chemotaxis")) %>%
+  mutate(GeneRatio = X.GeneInGOAndHitList / X.GeneInGO) %>%
+  arrange(GeneRatio) %>%
+  mutate(Description = factor(Description, levels = Description))
+
+#GO term figure (figure 3G)
+p <- ggplot(df_go, aes(x = GeneRatio, y = Description)) +
+  geom_point(aes(size = X.GeneInGOAndHitList, color = -LogP)) +
+  scale_size(range = c(4, 12)) +
+  scale_color_gradient(low = "red", high = "blue", trans = "reverse") +
+  labs(
+    title = "Pathway Analysis",
+    x = "Gene Hit Ratio",
+    y = NULL,
+    color = "-log10(Pvalue)",
+    size = "Gene Count"
+  ) +
+  theme_classic()
+```
