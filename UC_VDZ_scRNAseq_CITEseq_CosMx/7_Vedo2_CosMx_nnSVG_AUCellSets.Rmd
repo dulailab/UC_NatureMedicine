@@ -1,4 +1,4 @@
-
+#python code to create seraut input from h5ad files
 ```{python Note this part is finished by Scanpy}
 import scanpy as sc
 import pandas as pd
@@ -46,6 +46,10 @@ library(CellChat)
 library(AUCell)
 library(GSEABase)
 library(data.table)
+options(future.globals.maxSize = 30 * 1024^3)  # Set to 30 GB
+library(scran)
+library(SpatialExperiment)
+library(nnSVG)
 ```
 
 ```{r create seruat obj}
@@ -73,6 +77,20 @@ raw_1k_so <- FindVariableFeatures(raw_1k_so)
 raw_1k_so <- ScaleData(raw_1k_so)
 raw_1k_so <- RunPCA(raw_1k_so)
 raw_1k_so <- RunUMAP(raw_1k_so, dims = 1:30)
+
+#--------------------#
+#do harmoney workflow
+#--------------------#
+raw_1k_so[["RNA"]] <- split(raw_1k_so[["RNA"]], f = raw_1k_so$HS_combinebiopsy)
+DefaultAssay(raw_1k_so) <- "RNA"
+raw_1k_so <- NormalizeData(raw_1k_so)
+raw_1k_so <- FindVariableFeatures(raw_1k_so)
+raw_1k_so <- ScaleData(raw_1k_so)
+raw_1k_so <- RunPCA(raw_1k_so)
+raw_1k_so <- IntegrateLayers(object = raw_1k_so, method = HarmonyIntegration, orig.reduction = "pca",
+  new.reduction = 'harmony')
+
+raw_1k_so <- RunUMAP(raw_1k_so, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
 ```
 
 #Gene markers set for each cell types
@@ -143,13 +161,6 @@ scRNAseq_HC_markers_list <- list(
     "TNFRSF18","IGHM","TNFRSF13B","CD38","JCHAIN","PNOC"
   ),
 
-  Epithelial = c(
-    "KRT8","EPCAM","KRT18","PIGR","KRT19","IFI27","CLDN4","AGR2","CD9","CYSTM1","LGALS3",
-    "LGALS3BP","TPM1","FCGBP","KRT20","ADIRF","SFN","ANXA2","S100A10","SPINK1","CCL15","MT2A",
-    "RAC1","FABP5","LGALS9","ANXA4","TUBB4B","TSC22D1","APP","IER3","PLAC8","S100A6","CD63",
-    "HSD17B2","NDRG1","MT1X","PPARG","ERBB3","CDH1","CEACAM1","PHLDA2","EFNA1","LEFTY1",
-    "ERBB2","MAPK13","GSTP1","PTGES2","OAS1","GAS6","IFNGR2"
-  ),
 
   Endothelial = c(
     "SPARCL1","RAMP2","CAV1","IGFBP7","TM4SF1","RAMP3","IFITM3","CLEC14A","IFI27","ENG","VWF",
@@ -221,14 +232,6 @@ scRNAseq_inflamed_markers_list <- list(
     "MZB1","FKBP11","CD79A","TNFRSF17","XBP1","IGHG1","CD27","HSP90B1","IGHG2","IGKC",
     "IGHA1","DUSP5","SEC61G","CD38","HSPA1B","IGHM","JCHAIN","PNOC","GAS6","HSPA1A",
     "ST6GAL1","HSPB1"
-  ),
-
-  Epithelial = c(
-    "KRT8","EPCAM","KRT18","PIGR","KRT19","AGR2","IFI27","CLDN4","SPINK1","S100P","CD9",
-    "TPM1","LCN2","LGALS3","LGALS3BP","CYSTM1","FCGBP","ANXA2","SFN","S100A10","PHLDA2",
-    "OLFM4","SLPI","ANXA4","CDH1","KRT20","CCL15","LEFTY1","ITGA6","ERBB3","B3GNT7",
-    "SERPINA1","CEACAM6","S100A6","PLAC8","CXCL3","RARRES1","CCL28","ITGB4","MAPK13",
-    "CEACAM1","DDR1","SOX9","IL18","DMBT1","GDF15","EFNB2","EFNA1","CD24","IL13RA1"
   ),
 
   Endothelial = c(
@@ -304,14 +307,6 @@ scRNAseq_non_inflamed_markers_list <- list(
     "IFNAR1","HSPA1A","JCHAIN"
   ),
 
-  Epithelial = c(
-    "EPCAM","KRT8","KRT18","KRT19","PIGR","AGR2","CLDN4","IFI27","SPINK1","CD9","CYSTM1",
-    "TPM1","LGALS3","S100P","LGALS3BP","SFN","FCGBP","ANXA2","PHLDA2","LCN2","APP",
-    "SLPI","S100A10","KRT20","CDH1","ANXA4","LEFTY1","CCL15","MT2A","MT1X","LGALS9",
-    "B3GNT7","ERBB3","ITGA6","RARRES1","OLFM4","GDF15","PLAC8","SERPINA1","MAPK13",
-    "EFNA1","NDRG1","CEACAM1","DDR1","S100A6","CEACAM6","ATF3","CCL28","IL1R2","IL18"
-  ),
-
   Endothelial = c(
     "RAMP2","SPARCL1","RAMP3","TM4SF1","CAV1","CLEC14A","IGFBP7","ENG","ESAM","TGFBR2",
     "VWF","MGP","IFITM3","FABP5","CD34","CD59","ACVRL1","FLT1","TSC22D1","ICAM2","CDH5",
@@ -326,6 +321,9 @@ scRNAseq_non_inflamed_markers_list <- list(
 ```{r}
 #----------------#
 #----------------#
+#use panCK >= 5000 to gate select epithelial cells 
+raw_1k_so$Epi_panCK <- ifelse(raw_1k_so$Max.PanCK >= 5000, "Epi", "NonEpi")
+
 #seperate the longitude samples into HC, inflamed and non-inflamed
 Idents(raw_1k_so) <- "Condition"
 raw_1k_so_HC <- subset(raw_1k_so, idents = "HC")
@@ -345,6 +343,9 @@ cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
 names(cell_type_annotation) <- colnames(auc_mat)
 raw_1k_so_noninflamed$AUCell_1 <- cell_type_annotation
 
+raw_1k_so_noninflamed$AUCell <- ifelse(raw_1k_so_noninflamed$Max.PanCK >= 5000, "Epithelial", raw_1k_so_noninflamed$AUCell_1)
+
+
 #do inflamed
 exprMat <- as.matrix(GetAssayData(raw_1k_so_inflamed, slot = "data", assay = "RNA"))
 cells_rankings <- AUCell_buildRankings(exprMat, plotStats = FALSE)
@@ -354,6 +355,9 @@ auc_mat <- as.data.frame(getAUC(cells_AUC))
 cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
 names(cell_type_annotation) <- colnames(auc_mat)
 raw_1k_so_inflamed$AUCell_1 <- cell_type_annotation
+
+raw_1k_so_inflamed$AUCell <- ifelse(raw_1k_so_inflamed$Max.PanCK >= 5000, "Epithelial", raw_1k_so_inflamed$AUCell_1)
+
 
 #do HC
 exprMat <- as.matrix(GetAssayData(raw_1k_so_HC, slot = "data", assay = "RNA"))
@@ -365,28 +369,16 @@ cell_type_annotation <- rownames(auc_mat)[apply(auc_mat, 2, which.max)]
 names(cell_type_annotation) <- colnames(auc_mat)
 raw_1k_so_HC$AUCell_1 <- cell_type_annotation
 
+raw_1k_so_HC$AUCell <- ifelse(raw_1k_so_HC$Max.PanCK >= 5000, "Epithelial", raw_1k_so_HC$AUCell_1)
+
+
 #---------------
 #---------------
 #merge the three annotated objects back together
+#add the AUCell annotatoin back to the Seurat obj
 list_10x_merge_AUCell <- merge(raw_1k_so_HC, y = c(raw_1k_so_inflamed, raw_1k_so_noninflamed))
-#will lost harmony reduction, match the annotation back
-df_1 <- list_10x_merge_AUCell@meta.data
-df_1$cell_id <- rownames(df_1)
-df_1 <- df_1[,c("cell_id", "AUCell_1")]
 
-df_2 <- raw_1k_so@meta.data
-df_2$cell_id <- rownames(df_2)
-
-df2 <- merge(df_2, df_1, by.x = "cell_id", by.y = "cell_id", all.x = TRUE)
-
-rownames(df2) <- df2$cell_id
-
-#sort df2 
-df2 <- df2[rownames(raw_1k_so@meta.data), ]#sorting makes the trick
-
-raw_1k_so$AUCell <- df2$AUCell_1
-
-rm(list_10x_merge_AUCell)
+raw_1k_so <- AddMetaData(raw_1k_so, metadata  = list_10x_merge_AUCell@meta.data, col.name = "AUCell")
 
 #-----------------
 #-----------------
@@ -396,24 +388,271 @@ raw_1k_so$SPP1_status <- ifelse(spp1_expr$SPP1 > 0, "SPP1+", "SPP1-")
 raw_1k_so$AUCell_SPP1 <- ifelse(raw_1k_so$SPP1_status == "SPP1+" & raw_1k_so$AUCell == "Myeloid", "Myeloid_SPP1+",
                                      ifelse(raw_1k_so$SPP1_status == "SPP1-" & raw_1k_so$AUCell == "Myeloid", "Myeloid_SPP1-",
                                             raw_1k_so$AUCell))
+
+
+#------------------#
+#------------------#
+#do dot plot plot for figure 4B
+Idents(raw_1k_so) <- "AUCell"
+raw_1k_so_myeloid <- subset(raw_1k_so, idents = "Myeloid")
+
+#subset to remove HC and post-treatment
+Idents(raw_1k_so_myeloid) <- "Condition"
+raw_1k_so_myeloid_noHC <- subset(raw_1k_so_myeloid, idents = c("PRE_VDZ_Non-responder", "PRE_VDZ_Responder"))
+
+DotPlot(raw_1k_so_myeloid_noHC, group.by = "SPP1_status", features = c("ANGIOGENESIS_NR_up_all1",ANGIOGENESIS_NR_up_all,"ITGA4","ITGB7", "MMP19", "CCL2"), cols = c("lightgrey","red"))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#check cell numbers
+table(raw_1k_so_myeloid_noHC$SPP1_status)
 ```
 
-#do nnSVG spatial variable analysis
+#cellchat CCI analysis for figure 4D
 ```{r}
-#subset the dataset we only interested in the pre-treatment VDZ responder and non-responder
+#firstly do SCT of the dataset
+raw_1k_so <- SCTransform(raw_1k_so)
+
+#seperate the data into HC, responder, non-responder
+Idents(raw_1k_so) <- "Condition"
+raw_1k_so_control <- subset(raw_1k_so, idents = "HC")
+raw_1k_so_pre_res <- subset(raw_1k_so, idents = "PRE_VDZ_Responder")
+raw_1k_so_pre_nonres <- subset(raw_1k_so, idents = "PRE_VDZ_Non-responder")
+raw_1k_so_post_res <- subset(raw_1k_so, idents = "VDZ_POST_Responder")
+raw_1k_so_post_nonres <- subset(raw_1k_so, idents = "VDZ_POST_Non-responder")
+
+
+
+list_10x <- SplitObject(raw_1k_so, split.by = "HS_combinebiopsy")
+
+#unique(raw_1k_so$HS_combinebiopsy)
+#  [1] "FOV_01_10_40_53_HS34_VDZ_POST_Responder"            "FOV_03_11_54_58_76_HS33_HC"                        
+#  [3] "FOV_12_55_65_HS32_VDZ_RC_POST_Mayo0_Responder"      "FOV_04_13_44_56_64_HS32_VDZ_PRE_Responder"         
+#  [5] "FOV_05_14_45_57_81_HS31_HC"                         "FOV_15_59_HS50_VDZ_RS_POST_Mayo2_Non-responder"    
+#  [7] "FOV_16_60_HS50_VDZ_RS_PRE_Mayo2_Non-responder"      "FOV_17_74_HS49_VDZ_R_POST_Mayo3_Non-responder"     
+#  [9] "FOV_18_75_HS49_VDZ_RS_PRE_Mayo2_Non-responder"      "FOV_19_20_28_29_HS44_VDZ_PRE_Responder"            
+# [11] "FOV_02_41_62_80_HS34_VDZ_C_PRE_Mayo2_Responder"     "FOV21_HS48_VDZ_C_POST_1_Mayo2_Non-responder"       
+# [13] "FOV_22_61_HS47_VDZ_R_POST_Mayo3_Non-responder"      "FOV_24_73_HS46_VDZ_LC_PRE_Mayo3_Non-responder"     
+# [15] "FOV25_HS41_HC_2"                                    "FOV26_HS45_VDZ_R_POST_1_Mayo3_Non-responder"       
+# [17] "FOV27_HS45_VDZ_RC_PRE_1_Mayo0_Non-responder"        "FOV30_HS43_HC_1"                                   
+# [19] "FOV31_HS42_HC_1"                                    "FOV_06_32_35_48_67_71_72_78_HS38_VDZ_PRE_Responder"
+# [21] "FOV_34_46_HS39_HC"                                  "FOV_07_36_49_66_70_77_HS37_HC"                     
+# [23] "FOV_37_50_HS36_VDZ_POST_Responder"                  "FOV_09_38_HS40_HC"                                 
+# [25] "FOV47_HS38_VDZ_RC_POST_1_Mayo0_Responder"           "FOV_08_51_63_79_HS36_VDZ_RS_PRE_Mayo3_Responder"
+
+#---#
+##1## read counts matrix
+#---#
+#obtain the input data of each sample
+data.input_list <- list()
+for(i in 1:26){
+  data.input_list[[i]] <- Seurat::GetAssayData(list_10x[[i]], slot = "data", assay = "SCT")
+}
+#rename the cells of each samples
+for(i in 1:26){
+  colnames(data.input_list[[i]]) <- paste0("A",i,"_", colnames(data.input_list[[i]]))
+}
+
+
+#generat the read maxtirx (SCT in this case) input for repsonders and non-responders
+data.input.control <- cbind(data.input_list[[2]], data.input_list[[5]],data.input_list[[15]],data.input_list[[18]],
+                            data.input_list[[19]],data.input_list[[21]],data.input_list[[22]], data.input_list[[24]])
+data.input.pre.responder <- cbind(data.input_list[[4]],data.input_list[[10]],data.input_list[[11]],data.input_list[[20]],
+                                  data.input_list[[26]])
+data.input.pre.non_responder <- cbind(data.input_list[[7]],data.input_list[[9]],data.input_list[[14]],data.input_list[[17]])
+                                     
+data.input.post.responder <- cbind(data.input_list[[1]], data.input_list[[3]],data.input_list[[23]],data.input_list[[25]])
+data.input.post.non_responder <- cbind(data.input_list[[6]],data.input_list[[8]],data.input_list[[12]],data.input_list[[13]],
+                                       data.input_list[[16]])
+
+
+
+#---#
+##2## meta data
+#---#
+#generate the metadata for each sample and then for responders and non-responders
+meta.input_list <- list()
+for(i in 1:26){
+  Idents(list_10x[[i]]) <- "AUCell_SPP1"
+  meta.input_list[[i]] <- data.frame(labels = Idents(list_10x[[i]]), samples = paste("A",i,sep = ""))
+}
+meta.control <-  rbind(meta.input_list[[2]], meta.input_list[[5]],meta.input_list[[15]],meta.input_list[[18]],
+                            meta.input_list[[19]],meta.input_list[[21]],meta.input_list[[22]], meta.input_list[[24]])
+meta.pre.responder <- rbind(meta.input_list[[4]],meta.input_list[[10]],meta.input_list[[11]],meta.input_list[[20]],
+                                  meta.input_list[[26]])
+meta.pre.non_responder <- rbind(meta.input_list[[7]],meta.input_list[[9]],meta.input_list[[14]],meta.input_list[[17]])
+meta.post.responder <- rbind(meta.input_list[[1]], meta.input_list[[3]],meta.input_list[[23]],meta.input_list[[25]])
+meta.post.non_responder <- rbind(meta.input_list[[6]],meta.input_list[[8]],meta.input_list[[12]],meta.input_list[[13]],
+                                       meta.input_list[[16]])
+
+
+rownames(meta.control) <- colnames(data.input.control)
+rownames(meta.pre.responder) <- colnames(data.input.pre.responder)
+rownames(meta.pre.non_responder) <- colnames(data.input.pre.non_responder)
+rownames(meta.post.responder) <- colnames(data.input.post.responder)
+rownames(meta.post.non_responder) <- colnames(data.input.post.non_responder)
+
+#factor them
+meta.control$labels <- factor(meta.control$labels, levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.pre.responder$labels <- factor(meta.pre.responder$labels, levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.pre.non_responder$labels <- factor(meta.pre.non_responder$labels, , levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.post.responder$labels <- factor(meta.post.responder$labels, levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+meta.post.non_responder$labels <- factor(meta.post.non_responder$labels, , levels = c("Epithelial","Endothelial","Connective","B","Plasma","T","NK","Granulocyte","Neuron","Myeloid_SPP1-", "Myeloid_SPP1+"))
+
+meta.control$samples <- factor(meta.control$samples, levels = c("A2","A5","A15","A18","A19","A21","A22","A24"))
+meta.pre.responder$samples <- factor(meta.pre.responder$samples, levels = c("A4","A10","A11","A20","A26"))
+meta.pre.non_responder$samples <- factor(meta.pre.non_responder$samples, levels = c("A7","A9","A14","A17"))
+meta.post.responder$samples <- factor(meta.post.responder$samples, levels = c("A1","A3","A23","A25"))
+meta.post.non_responder$samples <- factor(meta.post.non_responder$samples, levels = c("A6","A8","A12","A13","A16"))
+
+#---#
+##3## the coordinates matrix
+#---#
+coordinates.input_list <- list()
+
+for(i in 1:26){
+  df <- list_10x[[i]]@meta.data
+  df <- df[,c("CenterX_global_px", "CenterY_global_px")]
+  #df$x_slide_mm <- df$x_slide_mm*1000
+  #df$y_slide_mm <- df$y_slide_mm*1000
+  coordinates.input_list[[i]] <- df
+}
+
+spatial.locs.control <- rbind(coordinates.input_list[[2]], coordinates.input_list[[5]],coordinates.input_list[[15]],coordinates.input_list[[18]],
+                            coordinates.input_list[[19]],coordinates.input_list[[21]],coordinates.input_list[[22]], coordinates.input_list[[24]])
+spatial.locs.pre.res <- rbind(coordinates.input_list[[4]],coordinates.input_list[[10]],coordinates.input_list[[11]],coordinates.input_list[[20]],
+                                  coordinates.input_list[[26]])
+spatial.locs.pre.nonres <- rbind(coordinates.input_list[[7]],coordinates.input_list[[9]],coordinates.input_list[[14]],coordinates.input_list[[17]])
+spatial.locs.post.res <- rbind(coordinates.input_list[[1]],coordinates.input_list[[3]],
+                                  coordinates.input_list[[23]],coordinates.input_list[[25]])
+spatial.locs.post.nonres <- rbind(coordinates.input_list[[6]],coordinates.input_list[[8]],coordinates.input_list[[12]],
+                                  coordinates.input_list[[13]],coordinates.input_list[[16]])
+
+
+rownames(spatial.locs.control) <- colnames(data.input.control)
+rownames(spatial.locs.pre.res) <- colnames(data.input.pre.responder)
+rownames(spatial.locs.pre.nonres) <- colnames(data.input.pre.non_responder)
+rownames(spatial.locs.post.res) <- colnames(data.input.post.responder)
+rownames(spatial.locs.post.nonres) <- colnames(data.input.post.non_responder)
+
+#turn into matrix
+spatial.locs.control <- as.matrix(spatial.locs.control)
+spatial.locs.pre.res <- as.matrix(spatial.locs.pre.res)
+spatial.locs.pre.nonres <- as.matrix(spatial.locs.pre.nonres)
+spatial.locs.post.res <- as.matrix(spatial.locs.post.res)
+spatial.locs.post.nonres <- as.matrix(spatial.locs.post.nonres)
+
+#---#
+##4## create the coordinates scale factor dataframe
+#---#
+conversion.factor = 0.16
+#d = computeCellDistance(spatial.locs.res) #Error: cannot allocate vector of size 2194.8 Gb ...NVM
+spot.size = 1.5 # ~1.5um per cell which is 0.0015mm per cell
+spatial.factors = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+spatial.factors <- rbind(spatial.factors, spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors,spatial.factors)
+
+rownames(spatial.factors) <- paste0("A", c(1:9))
+
+#---#
+##5## create the final cellchat objects
+#---#
+cellchat_CosMx_control <- createCellChat(object = data.input.control, meta = meta.control, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.control, spatial.factors = spatial.factors[c(1:8),])
+
+cellchat_CosMx_pre_res <- createCellChat(object = data.input.pre.responder, meta = meta.pre.responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.pre.res, spatial.factors = spatial.factors[c(1:5),])
+
+cellchat_CosMx_pre_nonres <- createCellChat(object = data.input.pre.non_responder, meta = meta.pre.non_responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.pre.nonres, spatial.factors = spatial.factors[c(1:4),])
+
+cellchat_CosMx_post_res <- createCellChat(object = data.input.post.responder, meta = meta.post.responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.post.res, spatial.factors = spatial.factors[c(1:4),])
+
+cellchat_CosMx_post_nonres <- createCellChat(object = data.input.post.non_responder, meta = meta.post.non_responder, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs.post.nonres, spatial.factors = spatial.factors[c(1:5),])
+
+#--------------------#
+#--------------------#
+#continue the CCI analysis
+
+CellChatDB <- CellChatDB.human # use CellChatDB.human if running on human data
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation") # use Secreted Signaling
+# set the used database in the object
+cellchat_CosMx_pre_res@DB <- CellChatDB.use
+cellchat_CosMx_pre_nonres@DB <- CellChatDB.use
+cellchat_CosMx_post_res@DB <- CellChatDB.use
+cellchat_CosMx_post_nonres@DB <- CellChatDB.use
+
+#do merged cellchat
+object.list <- list(pre_responder = cellchat_CosMx_pre_res, pre_non_responder = cellchat_CosMx_pre_nonres,
+                    post_responder = cellchat_CosMx_post_res, post_non_responder = cellchat_CosMx_post_nonres)
+for (i in 1:4){
+  object.list[[i]] <- subsetData(object.list[[i]]) # This step is necessary even if using the whole database
+#future::plan("multisession", workers = 4) 
+object.list[[i]] <- identifyOverExpressedGenes(object.list[[i]])
+object.list[[i]] <- identifyOverExpressedInteractions(object.list[[i]])
+
+object.list[[i]] <- computeCommunProb(object.list[[i]], type = "truncatedMean", trim = 0.1, 
+                              distance.use = FALSE, interaction.range = 250, scale.distance = NULL,
+                              contact.dependent = TRUE, contact.range = 100) 
+object.list[[i]] <- filterCommunication(object.list[[i]], min.cells = 10)
+object.list[[i]] <- computeCommunProbPathway(object.list[[i]])
+object.list[[i]] <- aggregateNet(object.list[[i]])
+}
+
+object.list[[1]] <- netAnalysis_computeCentrality(object.list[[1]], slot.name = "netP")
+object.list[[2]] <- netAnalysis_computeCentrality(object.list[[2]], slot.name = "netP")
+object.list[[3]] <- netAnalysis_computeCentrality(object.list[[3]], slot.name = "netP")
+object.list[[4]] <- netAnalysis_computeCentrality(object.list[[4]], slot.name = "netP")
+
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+#cellchat <- mergeCellChat(list(object.list[[1]], object.list[[2]]), add.names = c("pre_responder","pre_non_responder"))
+
+#do the scatter plot
+num.link <- sapply(object.list, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(object.list)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(object.list[[i]], title = names(object.list)[i], weight.MinMax = weight.MinMax,dot.size = c(4, 12))
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg)
+p1 <- gg[[1]]+coord_cartesian(xlim = c(0, 0.15), ylim = c(0, 0.15)) #pre-res
+p2 <- gg[[2]]+coord_cartesian(xlim = c(0, 0.15), ylim = c(0, 0.15)) #pre-nonres
+p3 <- gg[[3]]+coord_cartesian(xlim = c(0, 0.2), ylim = c(0, 0.2)) #post-res
+p4 <- gg[[4]]+coord_cartesian(xlim = c(0, 0.2), ylim = c(0, 0.2)) #post-nonres
+
+p_list <- list(p1,p2,p3,p4)
+
+for (i in 1:4) {
+pdf(paste0(i,"_plot_panCKEpi.pdf"), width = 7, height = 7)
+print(p_list[[i]])
+dev.off()
+}
+```
+
+#nnSVG 
+```{r}
+unique(raw_1k_so$HS_combinefov)
+
+# fov_list <- c("FOV16_HS50_VDZ_RS_PRE_1_Mayo2_Non-responder", "FOV60_HS50_VDZ_RS_PRE_2_Mayo2_Non-responder",
+#               "FOV18_HS49_VDZ_RS_PRE_1_Mayo2_Non-responder","FOV75_HS49_VDZ_RS_PRE_2_Mayo2_Non-responder",
+#               "FOV24_HS46_VDZ_LC_PRE_1_Mayo3_Non-responder", "FOV73_HS46_VDZ_LC_PRE_2_Mayo3_Non-responder",
+#               "FOV13_HS32_VDZ_sigm_PRE_3_Mayo1_Responder", "FOV56_HS32_VDZ_sigm_PRE_1_Mayo1_Responder",
+#               "FOV64_HS32_VDZ_sigm_PRE_2_Mayo1_Responder", "FOV19_HS44_VDZ_LC_PRE_2_Mayo0_Responder",
+#               "FOV02_HS34_VDZ_C_PRE_1_Mayo2_Responder", "FOV41_HS34_VDZ_C_PRE_3_Mayo2_Responder")
+#               #"FOV04_HS32_VDZ_RS_PRE_4_Mayo2_Responder","FOV19_HS44_VDZ_LC_PRE_2_Mayo0_Responder",
+#               #"FOV02_HS34_VDZ_C_PRE_1_Mayo2_Responder", "FOV06_HS38_VDZ_AC_PRE_3_Mayo2_Responder")
 Idents(raw_1k_so) <- "Condition"
 raw_1k_so_sub <- subset(raw_1k_so, idents = c( "PRE_VDZ_Responder", "PRE_VDZ_Non-responder"))
-
-#then we need to subset to max.panCK < 5000 (remove epithelials)
-raw_1k_so_sub <- subset(raw_1k_so, subset = Max.PanCK < 5000)
-
-#each FOV is very isolated from others in this dataset, need to do SVG analysis by FOV
-fov_list <- unique(raw_1k_so_sub$HS) #32 FOVs
+fov_list <- unique(raw_1k_so_sub$HS)
+#need to subset to remove epithelials
+Idents(raw_1k_so_sub) <- "AUCell"
+raw_1k_so_sub <- subset(raw_1k_so_sub, idents = "Epithelial", invert = T)
 
 final_df <- list()  # initialize an empty list to store dataframes
-
-#run nnSVG workflow
-for (fov in c(fov_list[1:7], fov_list[9:32])){ #remove fov27 returns error
+for (fov in c(fov_list[1:7], fov_list[9:32])){ #8 returns error
   Idents(raw_1k_so_sub) <- "HS"
   seu <- subset(raw_1k_so_sub, idents = fov)
   #subset to remove epithelial cells
@@ -431,10 +670,10 @@ for (fov in c(fov_list[1:7], fov_list[9:32])){ #remove fov27 returns error
   #spe <- filter_genes(spe)
   spe <- computeLibraryFactors(spe)
   spe <- logNormCounts(spe)
-
+  X <- model.matrix(~ colData(spe)$AUCell_SPP1) 
   assayNames(spe)
   set.seed(123)
-  spe <- nnSVG(spe, n_threads = 8, verbose = TRUE)
+  spe <- nnSVG(spe, n_threads = 8, verbose = TRUE, X = X)
 
   print(rowData(spe)[order(rowData(spe)$rank)[1:10], ])
   print(table(rowData(spe)$padj <= 0.05))
@@ -448,20 +687,20 @@ for (fov in c(fov_list[1:7], fov_list[9:32])){ #remove fov27 returns error
   # Store in the list
   final_df[[fov]] <- df_svg
 
-  write.csv(svg_res, paste0('~/', fov,'_nnsvg_noepi_nonGeneFilter_CellTypeCoVar.csv'))
+  write.csv(svg_res, paste0(
+      '~', fov,
+      '_nnsvg_noepi_nonGeneFilter_panCKEpi.csv'
+    ))
 }
 
-#combined_svg_results <- do.call(rbind, final_df)
-#write.csv(combined_svg_results, paste0('~/finalMergeDF_nnsvg_noepi_nonGeneFilter.csv'))
-```
 
-#process the nnSVG outcomes
-```{r}
-folder_path <- "~/"  # replace with your actual path
+#---------------------#
+#compare the mean of ranks between the two conditions
+#----
+folder_path <- "~"  # replace with your actual path
 # Get all files starting with "FOV" and ending in ".csv"
-responder_file_list <- list.files(path = folder_path, pattern = "Responder.*_noepi_nonGeneFilter_CellTypeCoVar\\.csv$", full.names = TRUE)
-nonresponder_file_list <- list.files(path = folder_path, pattern = "Non-responder.*_noepi_nonGeneFilter_CellTypeCoVar\\.csv$", full.names = TRUE)
-#file_list <- list.files(path = folder_path, pattern = "_noepi_nonGeneFilter\\.csv$", full.names = TRUE)
+responder_file_list <- list.files(path = folder_path, pattern = "Responder.*_noepi_nonGeneFilter_panCKEpi\\.csv$", full.names = TRUE)
+nonresponder_file_list <- list.files(path = folder_path, pattern = "Non-responder.*_noepi_nonGeneFilter_panCKEpi\\.csv$", full.names = TRUE)
 
 # Read all CSV files into a list
 responder_csv_list <- lapply(responder_file_list, read.csv)
@@ -477,11 +716,11 @@ nonresponder_csv_list <- lapply(nonresponder_csv_list, function(df) {
   return(df)
 })
 
-#merge everything
+#merge 8 sampke into one big df
 sample_df <- do.call(rbind, c(responder_csv_list, nonresponder_csv_list))
 
-#---
-#summarize the nnSVG outcome
+
+#use mean not median rank
 summary_df <- sample_df %>%
   group_by(gene_name) %>%
   summarise(
@@ -499,37 +738,6 @@ summary_df <- sample_df %>%
     .groups = "drop"
   )
 
-
-write.csv(summary_df, file = "~/longitude_SVG_difference_baselineResNonRes_removeEpithelial_byPanCK.csv")
-
-```
-
-#do the volcano plot of the nnSVG outcomes
-```{r}
-library(ggrepel)
-#read in the nnSVG outcomes
-a <- read.csv("~/longitude_SVG_difference_baselineResNonRes_removeEpithelial_byPanCK.csv") 
-
-#need to reverse the -/+
-a$mean_diff <- 0-a$mean_diff
-
-genes_to_label <- c("TIE1", "ITGA5", "IL20", "CD40", "VEGFD","CHI3L1", "COL4A1", "SELENOP", "TYROBP", "CD9")
-label_df <- subset(a, gene_name %in% genes_to_label)
-#use x-axis to be rank difference and y to be log-transformed p-value
-  p2 <- ggplot(a, aes(x = mean_diff, y = -log10(pval))) +
-  geom_point(aes(color = mean_diff), size = 3, alpha = 0.9) +
-  #geom_vline(xintercept = c(-log2(1.5), log2(1.5)), linetype = "dashed", color = "grey40") +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
-  scale_color_gradient2(
-    low = "blue",
-    mid = "white",
-    high = "red",
-    midpoint = 0,
-    name = "mean_diff")+
-    theme_classic()+
-    geom_text_repel(data = label_df, aes(label = gene_name), size = 3,box.padding = 0.4,point.padding = 0.3,segment.color = "black",       
-    segment.size = 0.3,force = 2,                    # push labels away more strongly
-  max.overlaps = Inf,
-  min.segment.length = 0       )
+write.csv(summary_df, file = "~/finalSummary_nnsvg_noepi_nonGeneFilter_longitude.csv")
 ```
 
