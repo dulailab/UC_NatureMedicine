@@ -15,11 +15,11 @@ library(AUCell)
 #the raw fastq files can be accessed through GEO GSE311585
 #the RNA, protein matrix and cell type annotation can be downloaded through 10.6084/m9.figshare.30729362
 # RNA counts
-rna_counts <- read.csv("~/RNA_raw_counts_UC.csv", row.names = 1, check.names = FALSE)
+rna_counts <- read.csv("~/RNA_raw_counts.csv", row.names = 1, check.names = FALSE)
 rna_counts <- t(rna_counts)
 
 # Annotation metadata, annotation file was provided by colaborator
-annotation <- read.csv("~/annotation_table_UC.csv")
+annotation <- read.csv("~/annotation_table.csv")
 rownames(annotation) <- annotation$X
 
 seu_citeseq <- CreateSeuratObject(rna_counts)
@@ -30,7 +30,7 @@ seu_citeseq <- AddMetaData(seu_citeseq, metadata = annotation)
 unique(seu_citeseq$RNA_annotation)
 
 #add ADT assay to the RNA object
-protein_counts <- read.csv("~/protein_raw_counts_UC.csv",row.names = 1, check.names = FALSE)
+protein_counts <- read.csv("~/protein_raw_counts.csv",row.names = 1, check.names = FALSE)
 protein_counts <- t(protein_counts)
 adt_assay <- CreateAssay5Object(counts = protein_counts)
 #seu_citeseq@assays$ADT <- adt_assay
