@@ -51,7 +51,7 @@ seu_citeseq$RNA_annotation_SPP1 <- ifelse(seu_citeseq$RNA_annotation == "myeloid
 DefaultAssay(seu_citeseq) <- "ADT"
 seu_citeseq <- NormalizeData(seu_citeseq, normalization.method = "CLR", margin = 2)
 
-#do vlnplot of figure 2H
+#do vlnplot of figure 3C
 Idents(seu_citeseq) <- "RNA_annotation"
 seu_citeseq_myeloid <- subset(seu_citeseq, idents = "myeloid")
 
@@ -77,6 +77,68 @@ p2 <- ggviolin(itga4_expr, x = "group", y = "CD49d", fill = "group",
                      label = "p.signif",method = "wilcox.test")+ # Add significance levels
   ggtitle("CITEseq ADT integrin-a4 (CD49d)")
 
-#figure 2H
+```
+#UMAP and Marker dotplot
+```{r}
+seu_citeseq$RNA_annotation_SPP1_2 <- ifelse(seu_citeseq$RNA_annotation_SPP1 == "SPP1- Myeloid", "SPP1- Macrophage",
+                                              ifelse(seu_citeseq$RNA_annotation_SPP1 == "SPP1+ Myeloid", "SPP1+ Macrophage",
+                                                     seu_citeseq$RNA_annotation_SPP1))
+
+p <- DimPlot(seu_citeseq, group.by = "RNA_annotation_SPP1_2", label = T)+theme(aspect.ratio = 1)
+
+DefaultAssay(seu_citeseq) <- "RNA"
+Idents(seu_citeseq) <- "RNA_annotation_SPP1_2"
+a <- FindAllMarkers(seu_citeseq)
+a_top5 <- a %>% 
+  filter(p_val_adj < 0.05 & pct.1 > 0.1 & avg_log2FC > 0) %>% 
+  group_by(cluster) %>%
+  top_n(n = 5, wt = avg_log2FC)
+
+a_top5$cluster <- factor(a_top5$cluster, levels = c("epithelial","endothelial","connective","b","plasma","SPP1- Macrophage",
+                                                    "SPP1+ Macrophage","granulocyte","tnk","undiff"))
+
+p <- DotPlot(seu_citeseq, group.by = "RNA_annotation_SPP1_2", features = unique(a_top5$gene), cols = c("grey","red"))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+#Cellchat CCI analysis
+```{r}
+data.input <- seu_citeseq[["RNA"]]$data # normalized data matrix
+# For Seurat version >= “5.0.0”, get the normalized data via `seurat_object[["RNA"]]$data`
+Idents(seu_citeseq) <- "RNA_annotation_SPP1"
+labels <- Idents(seu_citeseq)
+meta <- data.frame(labels = labels, row.names = names(labels)) # create a dataframe of the cell labels
+meta$labels <- factor(meta$labels, levels = c("epithelial", "b", "plasma", "tnk", "connective",  "endothelial", "granulocyte","undiff", "SPP1- Myeloid","SPP1+ Myeloid"))
+
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels")
+
+#---
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling", key = "annotation") # use Secreted Signaling
+cellchat@DB <- CellChatDB.use
+
+#process the cellchat obj
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+cellchat <- computeCommunProb(cellchat, type = "triMean")
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+#for supplemental figures
+ptm = Sys.time()
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+#---
+gg1 <- netVisual_heatmap(cellchat)
+#> Do heatmap based on a merged object
+gg2 <- netVisual_heatmap(cellchat, measure = "weight")
+#> Do heatmap based on a merged object
+gg1 + gg2
+```
