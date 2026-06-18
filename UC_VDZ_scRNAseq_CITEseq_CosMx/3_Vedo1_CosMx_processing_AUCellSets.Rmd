@@ -351,7 +351,7 @@ ANGIOGENESIS_NR_up_all <- unlist(strsplit(ANGIOGENESIS_NR_up_all, ","))
 list_10x_merge <- JoinLayers(list_10x_merge, assay = "Spatial")
 list_10x_merge <- AddModuleScore(list_10x_merge, features = list(ANGIOGENESIS_NR_up_all),name = c("ANGIOGENESIS_NR_up_all"), ctrl = 3)
 
-#do dot plot for figure 2f
+#do dot plot for figure 4B
 Idents(list_10x_merge) <- "AUCell"
 list_10x_merge_myeloid <- subset(list_10x_merge, idents = "Myeloid")
 DotPlot(list_10x_merge_myeloid, group.by = "SPP1_status", features = c("ANGIOGENESIS_NR_up_all1",ANGIOGENESIS_NR_up_all,"ITGA4","ITGB7", "MMP19", "CCL2"), cols = c("lightgrey","red"))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
