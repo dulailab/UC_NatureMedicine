@@ -551,6 +551,62 @@ for (cl in sort(unique(marker_table$Cluster))) {
 }
 ```
 
+
+## Macrophage SPP1+ vs SPP1- Comparison
+
+```{r}
+# -- 1. Subset to the two macrophage populations -------------------------------
+mac_cells <- subset(
+  harmonized_seurat,
+  subset = cluster_for_cellchat %in% c("Macrophage_SPP1_Negative",
+                                       "Macrophage_SPP1_Positive")
+)
+Idents(mac_cells) <- "cluster_for_cellchat"
+
+DefaultAssay(mac_cells) <- "SCT"
+
+# -- 2. dot plot: curated inflammatory markers --------------------------
+markers <- c("TIMP1", "MMP12", "MMP9", "IL1B", "IL1RN",
+             "SPP1", "CD300E", "TREM1", "S100A12")
+
+p1_final <- DotPlot(
+  object    = mac_cells,
+  features  = markers,
+  group.by  = "cluster_for_cellchat",
+  assay     = "SCT",
+  cols      = c("lightgrey", "#B2182B"),
+  dot.scale = 12                        # larger dots
+) +
+  coord_flip() +
+  scale_size(range = c(0, 12), limits = c(0, 100)) +  # size key goes to 100
+  labs(
+    title  = "Macrophage SPP1+ vs SPP1-",
+    x      = NULL,
+    y      = NULL,
+    size   = "% Expressed",
+    colour = "Avg Scaled Expr"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    plot.title      = element_text(hjust = 0.5, face = "bold", size = 13),
+    axis.text.x     = element_text(angle = 30, hjust = 1, size = 10),
+    axis.text.y     = element_text(size = 10),
+    legend.position = "right"
+  )
+
+print(p1_final)
+
+ggsave(
+  "Macrophage_SPP1_dotplot_final.pdf",
+  plot   = p1_final,
+  width  = 6,
+  height = 7,
+  units  = "in"
+)
+```
+
+
+
 ## CellChat
 
 ```{r}
